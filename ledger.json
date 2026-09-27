@@ -54,6 +54,21 @@
       "checks": "F001",
       "status": "verified",
       "note": "Independent Controller verify (kernel-controller): receipt F001-deposit.png shows spendable balance C$14.15 from two e-Transfers on Sep 27 (C$14.00 + C$0.15), sender redacted. BoC FXUSDCAD on fx_date 2026-09-25 is 1.4145 (latest published before weekend); 1÷1.4145 = 0.70696 to 5 decimals, matches fx_usd_per_cad. Page Challenge Value remains $10.00 (start_usd; note does not move cash). Schema: entries with a rate and no fx_date will be flagged going forward."
+    },
+    {
+      "id": "N001",
+      "type": "note",
+      "date": "2026-09-27",
+      "title": "Trade #1 decision: BUY LEGO 70779 Protector of Stone @ C$5 (pending pickup)",
+      "listing": "https://www.craigslist.org/view/d/vancouver-used-lego-sets-complete/eEBFkA1WiAeEgWd21EvFzo",
+      "memo": {
+        "what": "Buy used LEGO Bionicle Protector of Stone 70779, claimed complete (73 pcs), from East Vancouver Craigslist multi-set ad at C$5. Single-set purchase; itemized ask.",
+        "why": "Ask ~US$3.53 vs LO3 sold US$20.00. Est. eBay net after ~13% fees + US$5 ship ≈ US$12.40 → margin ≈ US$8.87. Fits wallet (~US$10 / C$14.15). Wall-clear: local pickup, eBay buyer-protection sell path, authenticity via set# + completeness check. Thin market (<3 solds in strict 60d) needs 2× margin; margin/ask ≈ 2.5× still clears.",
+        "solds": "PriceCharting eBay: 2026-08-12 pieces US$29.99; 2026-07-29 complete US$20.00 (LO3); 2026-07-26 complete US$29.34 (63d, used as 3rd). Comp page: https://www.pricecharting.com/game/lego-bionicle/protector-of-stone-70779. FX: BoC FXUSDCAD 1.4145 on 2026-09-25 → fx_usd_per_cad 0.70696.",
+        "risk": "Completeness unverified until piece count in hand (mask + Skull Spider). Thin market. CL header shows $2 min item — confirm 70779 is C$5 at meetup. Shipping/fee estimates. Seller may prefer multi-set though ad is itemized.",
+        "exit": "List on eBay.ca as used complete under kernel_experiment with buyer protection; target ≥ LO3 US$20; accept down to est_value floor after fees+ship (~US$12.40 net). If incomplete at pickup, walk away (do not buy)."
+      },
+      "note": "Purchase card issued to operator 2026-09-27. Buy entry E001 will append after paid pickup with receipts. Do not contact seller from Kernel."
     }
   ],
   "interventions": [
