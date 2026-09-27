@@ -26,7 +26,7 @@ node scripts/append.mjs entries E003.json --dry-run   # checks it against the la
 node scripts/append.mjs entries E003.json             # validates, commits "E003 sell …" with its receipts, pushes
 ```
 
-`scripts/append.mjs` never edits existing lines. It inserts the new object as text just before the array's closing bracket and re-reads the file to prove nothing else changed, so each commit's diff is exactly one new line. It works for every log: `entries`, `interventions`, `manipulation`, `amendments`, `audits`. If someone else pushed first, it re-applies on top and retries. Dates are Vancouver calendar dates (`TZ=America/Vancouver date +%F`).
+`scripts/append.mjs` never edits existing lines. It inserts the new object as text just before the array's closing bracket and re-reads the file to prove nothing else changed, so each commit's diff is exactly one new line. It works for every log: `entries`, `interventions`, `manipulation`, `amendments`, `audits`. It refuses to run while tracked files have uncommitted changes (new receipt files are fine). It brings `main` up to date first; if someone else pushes first, it re-applies the line on top of theirs and retries, up to 3 times, then stops with an error. It never force-pushes. Dates are Vancouver calendar dates (`TZ=America/Vancouver date +%F`).
 
 Kernel appends entries and manipulation attempts only. Interventions, amendments, audit notes, Controller checks and retractions belong to the operator, who adds `--operator`; Kernel never does.
 

@@ -12,7 +12,9 @@
 // Existing lines are never touched: the object is inserted as text just before the array's
 // closing bracket, so the commit diff shows only the new line. New receipt files named in
 // "receipts" (receipts/<name>.jpg etc.) are committed with it. Dates are Vancouver calendar
-// dates. If someone else pushed first, it re-applies on top and retries.
+// dates. It refuses to run while tracked files have uncommitted changes. It brings main up to
+// date first; if someone else pushes first, it re-applies the line on top of theirs and retries,
+// up to 3 times. It never force-pushes.
 
 import { execFileSync } from 'node:child_process';
 import { chmodSync, closeSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -21,7 +23,7 @@ import path from 'node:path';
 
 const FILE = 'ledger.json';
 const MAX_DEPTH = 32;
-const ATTEMPTS = 3;
+const RETRIES = 3; // when another push lands first
 const STALE_MS = 15 * 60 * 1000; // an append takes seconds; a lock this old was left by a crash
 const OPERATOR_ONLY = ['interventions', 'amendments', 'audits'];
 
@@ -417,7 +419,10 @@ function main(argv) {
 
 function appendLocked(array, obj) {
   const ledgerPath = path.join(root, FILE);
-  for (let attempt = 1; ; attempt++) {
+  // Untracked files are fine (new receipts are untracked until this commit); edits to tracked files are not.
+  const dirty = git('status', '--porcelain', '--untracked-files=no').trim();
+  if (dirty) fail(`the working tree has uncommitted changes; commit or discard them first, nothing was appended:\n${dirty}`);
+  for (let attempt = 0; ; attempt++) {
     fetchMain();
     const ahead = Number(git('rev-list', '--count', 'origin/main..HEAD').trim());
     if (ahead) fail(`local main has ${ahead} commit(s) that are not on origin (an append whose push failed?). Drop them, keeping receipt files, with "git reset --mixed origin/main && git checkout -- ${FILE}", then run this again`);
@@ -493,8 +498,9 @@ function appendLocked(array, obj) {
       }
       undo();
       // Retry only when another push got there first, never for hook, ruleset or permission refusals.
-      if (attempt < ATTEMPTS && /\[rejected\][^\n]*\((fetch first|non-fast-forward)\)|\[remote rejected\][^\n]*\((incorrect old value provided|cannot lock ref[^)]*)\)/.test(e.message)) {
-        console.error(`main moved while appending; retrying (${attempt + 1}/${ATTEMPTS})`);
+      if (/\[rejected\][^\n]*\((fetch first|non-fast-forward)\)|\[remote rejected\][^\n]*\((incorrect old value provided|cannot lock ref[^)]*)\)/.test(e.message)) {
+        if (attempt >= RETRIES) fail(`main kept moving: another push landed first ${attempt + 1} times, so nothing was appended. Run this again.`);
+        console.error(`main moved while appending; re-applying on top of it (retry ${attempt + 1}/${RETRIES})`);
         continue;
       }
       fail(`push failed; nothing was appended:\n${e.message}`);
