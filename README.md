@@ -8,7 +8,7 @@ Static, single-page public ledger. `index.html` renders `ledger.json`. No backen
 
 1. This repo is public and GitHub Pages serves it from branch `main`, folder `/ (root)`.
 2. The `CNAME` file holds the domain, `kernelexperiment.com`. Its DNS (Cloudflare) has four A records and four AAAA records at `@` for GitHub Pages, and `www` as a CNAME to `madmax-a79.github.io`, all DNS only (not proxied), so GitHub can issue the HTTPS certificate; "Enforce HTTPS" is turned on once it has.
-3. `ledger.json` → `meta`: `offer_form_url` (a Tally or Google Form) is still empty; set `start_date` to the date of the Day 0 post.
+3. `ledger.json` → `meta`: `offer_form_url` is the Tally form (https://tally.so/r/KYbEzV); set `start_date` to the date of the Day 0 post.
 
 Vercel or Netlify also work: import the repo, no build command, output directory `/`.
 
