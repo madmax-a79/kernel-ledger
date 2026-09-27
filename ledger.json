@@ -25,7 +25,21 @@
       { "usd": 1000000, "label": "the thesis holds" }
     ]
   },
-  "entries": [],
+  "entries": [
+    {
+      "id": "F001",
+      "type": "note",
+      "date": "2026-09-27",
+      "title": "Opening wallet funded: C$14.15 = US$10.00",
+      "amount_cad": 14.15,
+      "fx_usd_per_cad": 0.70696,
+      "fx_date": "2026-09-25",
+      "note": "Two e-Transfers into the challenge wallet (C$14.00 + C$0.15). Bank of Canada rate 1.4145 CAD/USD, 2026-09-25, latest published (weekend). Sender name redacted.",
+      "receipts": [
+        "receipts/F001-deposit.png"
+      ]
+    }
+  ],
   "interventions": [],
   "manipulation": [],
   "amendments": [
