@@ -126,6 +126,7 @@
   .row[data-type="death"] summary .name { color: var(--debit); }
   .row[data-type="pass"] summary, .row[data-type="note"] summary, .row[data-type="check"] summary { color: var(--muted); }
   .row.uncounted summary .usd { text-decoration: line-through; }
+  .row summary .show-s .d { white-space: nowrap; }
   .status { font-size: 0.8rem; text-align: right; }
   .status.verified { color: var(--credit); }
   .status.flagged { color: var(--debit); }
@@ -319,8 +320,9 @@
     const entries = (data.entries || []).filter((e) => e && typeof e === 'object');
     let cash = num(meta.start_usd || 10);
     const held = new Map();      // id -> {entry, est}
-    const checks = new Map();    // entry id -> latest check, in the order the checks were appended
-    (data.entries || []).forEach((e) => { if (e && e.type === 'check') checks.set(e.checks, e); });
+    const checks = new Map();    // entry id -> its checks, in the order they were appended; the last one is current
+    (data.entries || []).forEach((e) => { if (e && e.type === 'check') checks.set(e.checks, (checks.get(e.checks) || []).concat([e])); });
+    const current = (id) => (checks.get(id) || []).slice(-1)[0];
     const points = [{ date: meta.start_date || '', value: cash, cash }];
     let trades = 0, deaths = 0, hoursTotal = 0, kmTotal = 0;
     const lines = [];
@@ -328,27 +330,32 @@
     for (const e of entries) {
       const t = e.type;
       if (t === 'check') continue;
-      // A line the Controller flagged does not count until a later check verifies it.
-      const uncounted = (checks.get(e.id) || {}).status === 'flagged';
-      if (uncounted) { /* shown, not counted */ }
-      else if (t === 'buy') { cash += num(e.net_usd); held.set(e.id, { entry: e, est: num(e.est_value_usd) }); }
-      else if (t === 'sell') { cash += num(e.net_usd); if (e.closes) held.delete(e.closes); }
+      // A line the Controller flagged counts only against the value until a later check verifies it:
+      // its costs, and any death or reload, count; its gains and estimates do not.
+      const flagged = (current(e.id) || {}).status === 'flagged';
+      const net = flagged ? Math.min(0, num(e.net_usd)) : num(e.net_usd);
+      const uncounted = flagged && ['buy', 'sell', 'correction'].includes(t) && (net !== num(e.net_usd) || (t !== 'sell' && num(e.est_value_usd) > 0));
+      if (t === 'buy') { cash += net; held.set(e.id, { entry: e, est: flagged ? 0 : num(e.est_value_usd) }); }
+      else if (t === 'sell') { cash += net; if (e.closes) held.delete(e.closes); }
       else if (t === 'correction') {
-        cash += num(e.net_usd);
-        if (e.corrects && held.has(e.corrects) && e.est_value_usd != null) held.get(e.corrects).est = num(e.est_value_usd);
+        cash += net;
+        if (e.corrects && held.has(e.corrects) && e.est_value_usd != null) {
+          const h = held.get(e.corrects);
+          h.est = flagged ? Math.min(h.est, num(e.est_value_usd)) : num(e.est_value_usd);
+        }
       }
       else if (t === 'reload') { cash += num(e.net_usd); }
       else if (t === 'death') { deaths += 1; held.clear(); cash = 0; }
-      if (e.trade && !uncounted) trades = Math.max(trades, num(e.trade));
+      if (e.trade) trades = Math.max(trades, num(e.trade));
       hoursTotal += num(e.hours);
       kmTotal += num(e.km);
       const heldValue = [...held.values()].reduce((s, h) => s + h.est, 0);
       const value = cash + heldValue;
-      lines.push({ e, cash, value, uncounted });
+      lines.push({ e, cash, value, flagged, uncounted });
       points.push({ date: e.date, value, cash });
     }
     const heldValue = [...held.values()].reduce((s, h) => s + h.est, 0);
-    return { meta, entries, lines, checks, cash, held, heldValue, value: cash + heldValue, points, trades, deaths, hoursTotal, kmTotal };
+    return { meta, entries, lines, checks, current, cash, held, heldValue, value: cash + heldValue, points, trades, deaths, hoursTotal, kmTotal };
   }
 
   // Lines of a log that are neither retractions nor retracted.
@@ -403,7 +410,7 @@
     // sparkline
     const pts = s.points;
     const max = Math.max(...pts.map((p) => p.value), Number(m.start_usd || 10) * 1.2);
-    const min = 0;
+    const min = Math.min(0, ...pts.map((p) => p.value));
     const W = 600, H = 56, pad = 4;
     const xs = pts.map((_, i) => pts.length > 1 ? pad + (i / (pts.length - 1)) * (W - 2 * pad) : W / 2);
     const ys = pts.map((p) => H - pad - ((p.value - min) / (max - min || 1)) * (H - 2 * pad));
@@ -445,8 +452,8 @@
       rows.innerHTML = '<p class="empty">No lines yet. Trade #1 appears here with its memo, sold comps and receipts.</p>';
     } else {
       const kindName = { buy: 'Bought', sell: 'Sold', pass: 'Passed', correction: 'Correction', death: 'Ledger hit $0', reload: 'New life', note: 'Note' };
-      rows.innerHTML = visible.map(({ e, cash, value, uncounted }) => {
-        const chk = s.checks.get(e.id);
+      rows.innerHTML = visible.map(({ e, cash, value, flagged, uncounted }) => {
+        const chk = s.current(e.id);
         const st = chk ? chk.status : 'pending';
         const stTxt = String(st);
         const memo = e.memo || {};
@@ -466,18 +473,20 @@
         if (e.fees_usd) meta.push('fees ' + esc(usd(e.fees_usd)));
         if (e.shipping_usd) meta.push('shipping ' + esc(usd(e.shipping_usd)));
         if (e.est_value_usd != null && e.type === 'buy') meta.push('held at ' + esc(usd(e.est_value_usd)) + ' (low of 3 solds, net)');
+        if (e.est_value_usd != null && e.type === 'correction') meta.push('re-marks ' + esc(e.corrects) + ' at ' + esc(usd(e.est_value_usd)));
         if (e.hours) meta.push(esc(e.hours) + ' operator hours');
         if (e.km) meta.push(esc(e.km) + ' km');
         if (e.listing) meta.push(link(e.listing, 'listing (' + linkText(e.listing).split('/')[0] + ')', isHttp));
         if (e.closes) meta.push('closes ' + esc(e.closes));
         if (e.corrects) meta.push('corrects ' + esc(e.corrects));
-        const ctrl = (chk ? '<p class="meta">Controller ' + esc(chk.date || '') + ': ' + esc(chk.note || stTxt) + '</p>' : '')
-          + (uncounted ? '<p class="meta">Not counted in Challenge Value until a later check verifies it.</p>' : '');
+        const all = s.checks.get(e.id) || [];
+        const ctrl = all.map((c, n) => '<p class="meta">Controller ' + esc(c.date || '') + ', ' + esc(c.status) + (all.length > 1 && n === all.length - 1 ? ' (current)' : '') + ': ' + esc(c.note || '') + '</p>').join('')
+          + (flagged ? '<p class="meta">While flagged, its costs count toward Challenge Value and its gains and estimates do not.</p>' : '');
         return '<details class="row' + (uncounted ? ' uncounted' : '') + '" data-type="' + esc(e.type) + '" id="line-' + esc(e.id) + '">'
           + '<summary>'
           + '<span class="num">' + esc(e.trade ? '#' + e.trade : '') + '</span>'
           + '<span class="num hide-s">' + esc(e.date || '') + '</span>'
-          + '<span class="item"><span class="kind">' + esc(Object.hasOwn(kindName, e.type) ? kindName[e.type] : e.type) + '<span class="show-s"> · ' + esc(e.date || '') + ' · <span class="status ' + esc(st) + '">' + esc(stTxt) + '</span></span></span><span class="name">' + esc(e.item || e.title || '') + '</span></span>'
+          + '<span class="item"><span class="kind">' + esc(Object.hasOwn(kindName, e.type) ? kindName[e.type] : e.type) + '<span class="show-s"> · <span class="d">' + esc(e.date || '') + '</span> · <span class="status ' + esc(st) + '">' + esc(stTxt) + '</span></span></span><span class="name">' + esc(e.item || e.title || '') + '</span></span>'
           + '<span class="num r hide-m">' + esc(cad(e.amount_cad)) + '</span>'
           + '<span class="num r usd">' + esc(e.net_usd != null ? cell(e.net_usd) : '') + '</span>'
           + '<span class="num r hide-m">' + esc(cell(cash)) + '</span>'

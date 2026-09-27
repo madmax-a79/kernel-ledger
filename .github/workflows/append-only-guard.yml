@@ -55,8 +55,9 @@ jobs:
           const MAX_DEPTH = 32;
           const WORKFLOW = 'append-only-guard.yml';
           const env = process.env;
-          const errors = new Set();
+          const problemsFound = []; // { commit, text }: commit is the full id the problem belongs to, or null
           const notes = [];
+          const flag = (commit, text) => { if (!problemsFound.some((p) => p.text === text)) problemsFound.push({ commit, text }); };
 
           // ---- Ledger rules. The same block is in scripts/append.mjs and in the append-only guard
           // ---- (.github/workflows/append-only-guard.yml); change both together.
@@ -69,9 +70,11 @@ jobs:
           const LOG_FIELDS = { interventions: ['date', 'kind', 'detail'], manipulation: ['date', 'channel', 'summary'], amendments: ['version', 'date', 'summary'], audits: ['date', 'note'] };
           const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
           // Photos, screenshots and PDFs only: nothing a browser would run on the ledger's own site.
-          const RECEIPT = /^receipts\/[A-Za-z0-9][A-Za-z0-9._-]*\.(jpe?g|png|webp|gif|heic|pdf)$/;
-          // Control characters other than tab and newline, and bidirectional overrides.
-          const HIDDEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/;
+          const RECEIPT = /^receipts\/[A-Za-z0-9][A-Za-z0-9._-]*\.(jpe?g|png|webp|gif|heic|pdf)$/i;
+          // Control characters other than tab, newline and carriage return, and bidirectional overrides.
+          const HIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+          // Line types whose net_usd moves cash on the page.
+          const CASH_TYPES = ['buy', 'sell', 'correction', 'reload'];
 
           const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
           const text = (v) => typeof v === 'string' && v.trim() !== '';
@@ -123,7 +126,7 @@ jobs:
             const out = [];
             const say = (p) => out.push(p);
             if (!isObject(obj)) return ['it is not a JSON object'];
-            const { depth, strings } = shape(obj);
+            const { depth } = shape(obj);
             if (depth > 8) return [`it is nested ${depth} levels deep; a ledger line needs at most 8`];
             const need = (k) => { if (!text(obj[k])) say(`missing "${k}" (text)`); };
             const meta = isObject(ledger.meta) ? ledger.meta : {};
@@ -157,9 +160,13 @@ jobs:
                   if (buy && items.some((e) => e.type === 'sell' && e.closes === buy.id)) say(`"closes": ${buy.id} was already sold`);
                   break;
                 }
-                case 'correction':
-                  ref('corrects');
+                case 'correction': {
+                  const target = ref('corrects');
+                  if (target && obj.est_value_usd != null && (target.type !== 'buy' || items.some((e) => e.type === 'sell' && e.closes === target.id))) {
+                    say(`"est_value_usd" re-marks a held item, but ${target.id} is not a buy that is still held`);
+                  }
                   break;
+                }
                 case 'death':
                   if (count('death') > count('reload')) say('already dead: the next life starts with a reload');
                   if (count('death') >= lives) say(`all ${lives} lives are used`);
@@ -175,6 +182,7 @@ jobs:
                   if (text(obj.status) && !STATUSES.includes(obj.status)) say(`"status" must be one of: ${STATUSES.join(', ')}`);
                   break;
               }
+              if (obj.net_usd != null && !CASH_TYPES.includes(obj.type)) say(`a ${obj.type} line does not move cash, so it cannot carry "net_usd"`);
               for (const [k, min] of Object.entries(NUMBERS)) {
                 if (obj[k] == null) continue;
                 if (typeof obj[k] !== 'number' || !Number.isFinite(obj[k])) say(`"${k}" must be a number`);
@@ -185,8 +193,14 @@ jobs:
               if (obj.comps != null && !(Array.isArray(obj.comps) && obj.comps.every(isUrl))) say('"comps" must be a list of http(s) links');
               if (obj.listing != null && !isUrl(obj.listing)) say('"listing" must be an http(s) link');
               if (obj.memo != null && !isObject(obj.memo)) say('"memo" must be an object');
-              if (obj.receipts != null && !(Array.isArray(obj.receipts) && obj.receipts.every((r) => isUrl(r) || (typeof r === 'string' && RECEIPT.test(r))))) {
-                say('"receipts" must be http(s) links or receipts/<name>.jpg, .jpeg, .png, .webp, .gif, .heic or .pdf');
+              if (obj.receipts != null && !Array.isArray(obj.receipts)) say('"receipts" must be a list');
+              else if (obj.receipts != null) {
+                const seen = new Set();
+                for (const r of obj.receipts) {
+                  if (!isUrl(r) && !(typeof r === 'string' && RECEIPT.test(r))) say(`receipt ${JSON.stringify(r)} must be an http(s) link or receipts/<name> ending in .jpg, .jpeg, .png, .webp, .gif, .heic or .pdf, the name using only letters, digits, ".", "_" and "-"`);
+                  else if (seen.has(String(r).toLowerCase())) say(`receipt ${JSON.stringify(r)} is listed twice (names are compared ignoring case)`);
+                  seen.add(String(r).toLowerCase());
+                }
               }
               if (isDate(obj.date) && isDate(meta.start_date) && obj.date < meta.start_date) say(`"date" is before the start date ${meta.start_date}`);
             } else if (obj.retracts != null) {
@@ -197,16 +211,23 @@ jobs:
               else if (items.some((x) => x.retracts === obj.retracts)) say(`${array}[${obj.retracts}] is already retracted`);
             } else {
               LOG_FIELDS[array].forEach(need);
+              // A retracted line no longer holds its week or version.
+              const retracted = new Set(items.map((x) => x.retracts).filter(Number.isInteger));
+              const standing = ledger[array].filter((x, i) => isObject(x) && x.retracts == null && !retracted.has(i));
               if (array === 'amendments' && text(obj.version) && !/^\d+(\.\d+)*$/.test(obj.version)) say('"version" is written like "1.1", without a "v"');
-              if (array === 'amendments' && items.some((x) => String(x.version) === String(obj.version))) say(`amendment v${obj.version} already exists`);
+              if (array === 'amendments' && standing.some((x) => String(x.version) === String(obj.version))) say(`amendment v${obj.version} already exists`);
               if (array === 'audits' && obj.week != null && !(Number.isInteger(obj.week) && obj.week >= 0)) say('"week" must be a whole number');
-              else if (array === 'audits' && obj.week != null && items.some((x) => x.week === obj.week)) say(`the audit note for week ${obj.week} already exists`);
+              else if (array === 'audits' && obj.week != null && standing.some((x) => x.week === obj.week)) say(`the audit note for week ${obj.week} already exists`);
+              if (array === 'interventions' && obj.acknowledges != null && !(typeof obj.acknowledges === 'string' && /^[0-9a-f]{40}$/.test(obj.acknowledges))) say('"acknowledges" is the full 40-character id of the commit that broke the rules');
               if (items.some((x) => same(x, obj))) say(`this exact line is already in ${array}`);
             }
             if (array !== 'entries' && obj.id != null && items.some((x) => x.id === obj.id)) say(`${array} already has id ${JSON.stringify(obj.id)}`);
             if (obj.date != null && !isDate(obj.date)) say('"date" must be a real date written YYYY-MM-DD');
             else if (isDate(obj.date) && obj.date > latestDate) say(`"date" ${obj.date} is in the future (latest allowed ${latestDate}, Vancouver time)`);
-            if (strings.some((s) => HIDDEN.test(s))) say('text contains control or bidirectional-override characters');
+            for (const [k, v] of Object.entries(obj)) {
+              const hit = [k, ...shape(v).strings].map((x) => HIDDEN.exec(x)).find(Boolean);
+              if (hit) say(`"${k}" contains the invisible character U+${hit[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
+            }
             return out;
           }
           // Duplicate keys per object (so a second "entries" can't hide behind the first) and nesting depth.
@@ -281,7 +302,7 @@ jobs:
           }
 
           // Existing objects must stay where they are, unchanged. Returns false if any moved.
-          function compare(before, after, where, merge) {
+          function compare(before, after, c, merge) {
             let ok = true;
             for (const k of ARRAYS) {
               const old = before[k], cur = after[k];
@@ -290,7 +311,7 @@ jobs:
               if (bad < 0) continue;
               ok = false;
               const more = changed.filter(Boolean).length - 1;
-              errors.add(`${where}: ${k}[${bad}] ${label(old[bad])} ${bad >= cur.length ? 'was removed' : 'was modified or moved'}`
+              flag(c, `${short(c)}: ${k}[${bad}] ${label(old[bad])} ${bad >= cur.length ? 'was removed' : 'was modified or moved'}`
                 + (more > 0 ? ` (and ${more} more existing ${k} lines)` : '')
                 + (merge ? ' in a merge; append-only needs a linear main, so rebase instead of merging' : ''));
             }
@@ -298,19 +319,26 @@ jobs:
           }
 
           // Each appended line must follow the ledger rules, checked against the ledger as it stood
-          // before it; Kernel may append only its own kinds of line.
-          function checkAppended(before, after, where, who) {
+          // before it, and name only receipt files that are in the commit; Kernel may append only its
+          // own kinds of line.
+          function checkAppended(before, after, c, who) {
             const soFar = { ...after };
             for (const k of ARRAYS) soFar[k] = before[k].slice();
+            // One day of slack over the script's "today": the check can run on a machine whose clock is a little ahead.
             const latest = vancouverDate(1);
             for (const k of ARRAYS) {
               for (const o of after[k].slice(before[k].length)) {
                 const bad = problems(k, o, soFar, latest);
-                if (bad.length) errors.add(`${where}: appended ${k} line ${label(o)}: ${bad.join('; ')}`);
+                if (bad.length) flag(c, `${short(c)}: appended ${k} line ${label(o)}: ${bad.join('; ')}`);
+                if (k === 'entries' && isObject(o) && Array.isArray(o.receipts)) {
+                  for (const r of o.receipts.filter((x) => typeof x === 'string' && RECEIPT.test(x))) {
+                    if (!/^100644 blob /.test(out('ls-tree', c, '--', r))) flag(c, `${short(c)}: ${label(o)} names receipt ${JSON.stringify(r)}, which is not a file in this commit`);
+                  }
+                }
                 if (appendOnly(who)) {
-                  if (!['entries', 'manipulation'].includes(k)) errors.add(`${where}: ${who} may not append to ${k}`);
-                  else if (isObject(o) && o.type === 'check') errors.add(`${where}: ${who} may not append Controller checks (${label(o)})`);
-                  if (isObject(o) && o.retracts != null) errors.add(`${where}: ${who} may not retract lines`);
+                  if (!['entries', 'manipulation'].includes(k)) flag(c, `${short(c)}: ${who} may not append to ${k}`);
+                  else if (isObject(o) && o.type === 'check') flag(c, `${short(c)}: ${who} may not append Controller checks (${label(o)})`);
+                  if (isObject(o) && o.retracts != null) flag(c, `${short(c)}: ${who} may not retract lines`);
                 }
                 soFar[k].push(o);
               }
@@ -324,11 +352,11 @@ jobs:
                 const base = lastGood(p);
                 if (!base) continue;
                 for (const k of new Set([...Object.keys(base), ...Object.keys(cur.data)])) {
-                  if (!ARRAYS.includes(k) && !same(base[k], cur.data[k])) errors.add(`${short(c)}: ${who} may not change "${k}" in ${FILE}`);
+                  if (!ARRAYS.includes(k) && !same(base[k], cur.data[k])) flag(c, `${short(c)}: ${who} may not change "${k}" in ${FILE}`);
                 }
               }
             }
-            const tracked = parents.length ? out('ls-tree', '-r', '--name-only', parents[0], '--', 'receipts/').split('\n').filter(Boolean).map((p) => p.toLowerCase()) : [];
+            const taken = new Set(parents.length ? out('ls-tree', '-r', '--name-only', parents[0], '--', 'receipts/').split('\n').filter(Boolean).map((p) => p.toLowerCase()) : []);
             const raw = out('diff-tree', '-r', '-m', '--root', '--no-commit-id', '--no-renames', '--raw', '-z', c).split('\0');
             for (let i = 0; i + 1 < raw.length; i += 2) {
               const m = /^:\d{6} (\d{6}) [0-9a-f]+ [0-9a-f]+ ([A-Z])/.exec(raw[i]);
@@ -336,8 +364,9 @@ jobs:
               const [, mode, status] = m, path = raw[i + 1];
               const ok = mode === '100644' && ((path === FILE && status === 'M') || (status === 'A' && RECEIPT.test(path)));
               const verb = { A: 'added', D: 'deleted', M: 'modified', T: 'changed the type of' }[status] || 'changed';
-              if (!ok) errors.add(`${short(c)}: ${who} may only append to ${FILE} and add new receipts/ photos or PDFs, but ${verb} ${JSON.stringify(path)}${mode !== '100644' && status !== 'D' ? ` as mode ${mode}` : ''}`);
-              else if (status === 'A' && tracked.includes(path.toLowerCase())) errors.add(`${short(c)}: ${JSON.stringify(path)} differs only in case from an existing receipt`);
+              if (!ok) flag(c, `${short(c)}: ${who} may only append to ${FILE} and add new receipts/ photos or PDFs, but ${verb} ${JSON.stringify(path)}${mode !== '100644' && status !== 'D' ? ` as mode ${mode}` : ''}`);
+              else if (status === 'A' && taken.has(path.toLowerCase())) flag(c, `${short(c)}: ${JSON.stringify(path)} differs only in case from another receipt`);
+              if (status === 'A') taken.add(path.toLowerCase());
             }
           }
 
@@ -357,29 +386,27 @@ jobs:
 
           async function run() {
             const after = env.AFTER || out('rev-parse', 'HEAD').trim();
+            const manual = env.EVENT === 'workflow_dispatch';
             let before = /^[0-9a-f]{40}$/.test(env.BEFORE || '') && !/^0+$/.test(env.BEFORE) ? env.BEFORE : null;
             if (before && (env.FORCED === 'true' || !hasCommit(before) || !isAncestor(before, after))) {
-              errors.add(`History was rewritten: ${short(before)} is no longer in main's history (force push). Past ledger states must stay in history.`);
+              flag(null, `History was rewritten: ${short(before)} is no longer in main's history (force push). Past ledger states must stay in history.`);
               before = null;
             }
 
-            // Start from the newest commit that an earlier run of this guard finished checking, so pushes
-            // whose run was skipped, cancelled or deleted are checked too.
+            // Start from the newest commit an earlier run of this guard passed, so pushes whose run was
+            // skipped, cancelled, deleted or failed are checked again until they pass or are acknowledged.
             let base = before, from = before ? `${short(before)}, the previous tip` : 'the first commit';
-            if (env.EVENT === 'workflow_dispatch') {
+            if (manual) {
               base = null;
               from = 'the first commit (manual re-check)';
             } else if (API) {
               try {
-                const runs = (await api(`actions/workflows/${WORKFLOW}/runs?branch=main&status=completed&per_page=100`))
-                  .filter((r) => String(r.id) !== env.RUN_ID && ['success', 'failure'].includes(r.conclusion));
-                const last = runs.find((r) => hasCommit(r.head_sha) && isAncestor(r.head_sha, after));
-                if (last && last.head_sha !== before) {
-                  base = last.head_sha;
-                  from = `${short(base)}, the last commit a finished guard run covered`;
-                }
+                const runs = await api(`actions/workflows/${WORKFLOW}/runs?branch=main&status=success&per_page=100`);
+                const last = runs.find((r) => String(r.id) !== env.RUN_ID && r.conclusion === 'success' && hasCommit(r.head_sha) && isAncestor(r.head_sha, after));
+                base = last ? last.head_sha : null;
+                from = last ? `${short(base)}, the last commit a passing guard run covered` : 'the first commit (no earlier passing run)';
               } catch (e) {
-                notes.push(`Could not list earlier guard runs (${e.message}); checked from ${from}.`);
+                flag(null, `Could not list earlier guard runs (${e.message}); run this check again.`);
               }
             } else {
               notes.push('Not running on GitHub, so earlier runs and the push log were not consulted.');
@@ -390,19 +417,25 @@ jobs:
             // Who pushed each commit: this push's actor, and GitHub's push log for any earlier push in range.
             const pusher = new Map();
             if (env.EVENT === 'push') revList(before ? `${before}..${after}` : after).forEach((c) => pusher.set(c, env.ACTOR));
-            if (API && commits.length) {
+            if (API && commits.some((c) => !pusher.has(c))) {
               try {
                 for (const a of await api('activity?ref=refs%2Fheads%2Fmain&per_page=100', 10)) {
                   if (!inRange.has(a.after)) continue;
                   const who = a.actor?.login || '?';
-                  if (['force_push', 'branch_deletion'].includes(a.activity_type)) errors.add(`main had a ${a.activity_type.replace('_', ' ')} by ${who} at ${a.timestamp}`);
+                  if (['force_push', 'branch_deletion'].includes(a.activity_type)) flag(a.after, `main had a ${a.activity_type.replace('_', ' ')} by ${who} at ${a.timestamp}`);
                   const range = /^0+$/.test(a.before) || !hasCommit(a.before) ? a.after : `${a.before}..${a.after}`;
                   if (hasCommit(a.after)) revList(range).forEach((c) => { if (!pusher.has(c)) pusher.set(c, who); });
                 }
               } catch (e) {
-                notes.push(`Could not read the push log (${e.message}); only this push's own account rules were applied.`);
+                if (manual) notes.push(`Could not read the push log (${e.message}).`);
+                else flag(null, `Could not read the push log (${e.message}); run this check again.`);
               }
             }
+            // A commit nobody can be named for gets no benefit of the doubt, except in a manual re-check of
+            // old history, which may be older than the push log.
+            const unknown = API ? commits.filter((c) => !pusher.has(c)) : [];
+            if (unknown.length && manual) notes.push(`${unknown.length} older commit(s) are not in GitHub's push log, so account rules were not applied to them.`);
+            else unknown.forEach((c) => flag(c, `${short(c)}: not in GitHub's push log, so it is unclear who pushed it; run this check again, or look at it by hand`));
 
             for (const c of commits) {
               const cur = load(c);
@@ -410,23 +443,28 @@ jobs:
               const who = pusher.get(c);
               if (appendOnly(who)) checkFiles(c, parents, cur, who);
               if (cur.missing) {
-                if (parents.some((p) => lastGood(p))) errors.add(`${short(c)}: ${FILE} was deleted`);
+                if (parents.some((p) => lastGood(p))) flag(c, `${short(c)}: ${FILE} was deleted`);
                 continue;
               }
-              if (cur.error) errors.add(`${short(c)}: ${FILE} ${cur.error}`);
+              if (cur.error) flag(c, `${short(c)}: ${FILE} ${cur.error}`);
               if (!cur.data) continue;
-              if (!parents.length) checkAppended(Object.fromEntries(ARRAYS.map((k) => [k, []])), cur.data, short(c), who);
+              if (!parents.length) checkAppended(Object.fromEntries(ARRAYS.map((k) => [k, []])), cur.data, c, who);
               for (const p of parents) {
                 const prev = lastGood(p);
-                if (prev && compare(prev, cur.data, short(c), parents.length > 1)) checkAppended(prev, cur.data, short(c), who);
+                if (prev && compare(prev, cur.data, c, parents.length > 1)) checkAppended(prev, cur.data, c, who);
               }
             }
 
-            // End to end, the ledger must extend the one that was last checked.
+            // Problems in a commit the operator has acknowledged in an intervention line stay on record here
+            // as notes instead of failing every run.
             const head = load(after);
-            const start = base ? lastGood(base) : null;
-            if (head.data && start) compare(start, head.data, `${short(base)}..${short(after)}`, false);
+            const acknowledged = new Set((head.data?.interventions || []).filter(isObject).map((x) => x.acknowledges).filter(Boolean));
+            for (const p of problemsFound.filter((x) => x.commit && acknowledged.has(x.commit))) {
+              notes.push(`Acknowledged in the interventions log: ${p.text}`);
+              problemsFound.splice(problemsFound.indexOf(p), 1);
+            }
 
+            const start = base ? lastGood(base) : null;
             const lines = [`Checked ${commits.length} commit(s) from ${from} up to ${short(after)}.`];
             const kernel = [...new Set([...pusher.values()].filter(appendOnly))];
             if (kernel.length) lines.push(`Account rules applied to pushes by ${kernel.join(', ')}.`);
@@ -440,15 +478,16 @@ jobs:
           }
 
           let lines = [];
-          try { lines = await run(); } catch (e) { errors.add(`The guard itself failed: ${String(e?.message || e).split('\n')[0]}`); }
+          try { lines = await run(); } catch (e) { flag(null, `The guard itself failed: ${String(e?.message || e).split('\n')[0]}`); }
 
           const esc = (s) => s.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+          const errors = problemsFound.map((p) => p.text);
           for (const e of errors) console.log(`::error title=append-only guard::${esc(e)}`);
           const fence = (s) => s.replace(/```/g, "'''");
-          const summary = ['## append-only guard', errors.size ? `**Failed** (${errors.size})` : '**Passed**', '',
-            ...(errors.size ? ['```text', ...[...errors].map(fence), '```', ''] : []),
-            ...lines, ...notes.map((n) => `> ${n}`)].join('\n');
+          const summary = ['## append-only guard', errors.length ? `**Failed** (${errors.length})` : '**Passed**', '',
+            ...(errors.length ? ['```text', ...errors.map(fence), '```', ''] : []),
+            ...lines, ...notes.map((n) => `> ${fence(n)}`)].join('\n');
           console.log(summary);
           if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, summary + '\n');
-          process.exit(errors.size ? 1 : 0);
+          process.exit(errors.length ? 1 : 0);
           JS

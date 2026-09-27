@@ -15,13 +15,14 @@
 // dates. If someone else pushed first, it re-applies on top and retries.
 
 import { execFileSync } from 'node:child_process';
-import { closeSync, lstatSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
 const FILE = 'ledger.json';
 const MAX_DEPTH = 32;
 const ATTEMPTS = 3;
+const STALE_MS = 15 * 60 * 1000; // an append takes seconds; a lock this old was left by a crash
 const OPERATOR_ONLY = ['interventions', 'amendments', 'audits'];
 
 // ---- Ledger rules. The same block is in scripts/append.mjs and in the append-only guard
@@ -35,9 +36,11 @@ const NUMBERS = { trade: 1, amount_cad: 0, fx_usd_per_cad: 0, amount_usd: 0, net
 const LOG_FIELDS = { interventions: ['date', 'kind', 'detail'], manipulation: ['date', 'channel', 'summary'], amendments: ['version', 'date', 'summary'], audits: ['date', 'note'] };
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 // Photos, screenshots and PDFs only: nothing a browser would run on the ledger's own site.
-const RECEIPT = /^receipts\/[A-Za-z0-9][A-Za-z0-9._-]*\.(jpe?g|png|webp|gif|heic|pdf)$/;
-// Control characters other than tab and newline, and bidirectional overrides.
-const HIDDEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/;
+const RECEIPT = /^receipts\/[A-Za-z0-9][A-Za-z0-9._-]*\.(jpe?g|png|webp|gif|heic|pdf)$/i;
+// Control characters other than tab, newline and carriage return, and bidirectional overrides.
+const HIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+// Line types whose net_usd moves cash on the page.
+const CASH_TYPES = ['buy', 'sell', 'correction', 'reload'];
 
 const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
 const text = (v) => typeof v === 'string' && v.trim() !== '';
@@ -89,7 +92,7 @@ function problems(array, obj, ledger, latestDate) {
   const out = [];
   const say = (p) => out.push(p);
   if (!isObject(obj)) return ['it is not a JSON object'];
-  const { depth, strings } = shape(obj);
+  const { depth } = shape(obj);
   if (depth > 8) return [`it is nested ${depth} levels deep; a ledger line needs at most 8`];
   const need = (k) => { if (!text(obj[k])) say(`missing "${k}" (text)`); };
   const meta = isObject(ledger.meta) ? ledger.meta : {};
@@ -123,9 +126,13 @@ function problems(array, obj, ledger, latestDate) {
         if (buy && items.some((e) => e.type === 'sell' && e.closes === buy.id)) say(`"closes": ${buy.id} was already sold`);
         break;
       }
-      case 'correction':
-        ref('corrects');
+      case 'correction': {
+        const target = ref('corrects');
+        if (target && obj.est_value_usd != null && (target.type !== 'buy' || items.some((e) => e.type === 'sell' && e.closes === target.id))) {
+          say(`"est_value_usd" re-marks a held item, but ${target.id} is not a buy that is still held`);
+        }
         break;
+      }
       case 'death':
         if (count('death') > count('reload')) say('already dead: the next life starts with a reload');
         if (count('death') >= lives) say(`all ${lives} lives are used`);
@@ -141,6 +148,7 @@ function problems(array, obj, ledger, latestDate) {
         if (text(obj.status) && !STATUSES.includes(obj.status)) say(`"status" must be one of: ${STATUSES.join(', ')}`);
         break;
     }
+    if (obj.net_usd != null && !CASH_TYPES.includes(obj.type)) say(`a ${obj.type} line does not move cash, so it cannot carry "net_usd"`);
     for (const [k, min] of Object.entries(NUMBERS)) {
       if (obj[k] == null) continue;
       if (typeof obj[k] !== 'number' || !Number.isFinite(obj[k])) say(`"${k}" must be a number`);
@@ -151,8 +159,14 @@ function problems(array, obj, ledger, latestDate) {
     if (obj.comps != null && !(Array.isArray(obj.comps) && obj.comps.every(isUrl))) say('"comps" must be a list of http(s) links');
     if (obj.listing != null && !isUrl(obj.listing)) say('"listing" must be an http(s) link');
     if (obj.memo != null && !isObject(obj.memo)) say('"memo" must be an object');
-    if (obj.receipts != null && !(Array.isArray(obj.receipts) && obj.receipts.every((r) => isUrl(r) || (typeof r === 'string' && RECEIPT.test(r))))) {
-      say('"receipts" must be http(s) links or receipts/<name>.jpg, .jpeg, .png, .webp, .gif, .heic or .pdf');
+    if (obj.receipts != null && !Array.isArray(obj.receipts)) say('"receipts" must be a list');
+    else if (obj.receipts != null) {
+      const seen = new Set();
+      for (const r of obj.receipts) {
+        if (!isUrl(r) && !(typeof r === 'string' && RECEIPT.test(r))) say(`receipt ${JSON.stringify(r)} must be an http(s) link or receipts/<name> ending in .jpg, .jpeg, .png, .webp, .gif, .heic or .pdf, the name using only letters, digits, ".", "_" and "-"`);
+        else if (seen.has(String(r).toLowerCase())) say(`receipt ${JSON.stringify(r)} is listed twice (names are compared ignoring case)`);
+        seen.add(String(r).toLowerCase());
+      }
     }
     if (isDate(obj.date) && isDate(meta.start_date) && obj.date < meta.start_date) say(`"date" is before the start date ${meta.start_date}`);
   } else if (obj.retracts != null) {
@@ -163,16 +177,23 @@ function problems(array, obj, ledger, latestDate) {
     else if (items.some((x) => x.retracts === obj.retracts)) say(`${array}[${obj.retracts}] is already retracted`);
   } else {
     LOG_FIELDS[array].forEach(need);
+    // A retracted line no longer holds its week or version.
+    const retracted = new Set(items.map((x) => x.retracts).filter(Number.isInteger));
+    const standing = ledger[array].filter((x, i) => isObject(x) && x.retracts == null && !retracted.has(i));
     if (array === 'amendments' && text(obj.version) && !/^\d+(\.\d+)*$/.test(obj.version)) say('"version" is written like "1.1", without a "v"');
-    if (array === 'amendments' && items.some((x) => String(x.version) === String(obj.version))) say(`amendment v${obj.version} already exists`);
+    if (array === 'amendments' && standing.some((x) => String(x.version) === String(obj.version))) say(`amendment v${obj.version} already exists`);
     if (array === 'audits' && obj.week != null && !(Number.isInteger(obj.week) && obj.week >= 0)) say('"week" must be a whole number');
-    else if (array === 'audits' && obj.week != null && items.some((x) => x.week === obj.week)) say(`the audit note for week ${obj.week} already exists`);
+    else if (array === 'audits' && obj.week != null && standing.some((x) => x.week === obj.week)) say(`the audit note for week ${obj.week} already exists`);
+    if (array === 'interventions' && obj.acknowledges != null && !(typeof obj.acknowledges === 'string' && /^[0-9a-f]{40}$/.test(obj.acknowledges))) say('"acknowledges" is the full 40-character id of the commit that broke the rules');
     if (items.some((x) => same(x, obj))) say(`this exact line is already in ${array}`);
   }
   if (array !== 'entries' && obj.id != null && items.some((x) => x.id === obj.id)) say(`${array} already has id ${JSON.stringify(obj.id)}`);
   if (obj.date != null && !isDate(obj.date)) say('"date" must be a real date written YYYY-MM-DD');
   else if (isDate(obj.date) && obj.date > latestDate) say(`"date" ${obj.date} is in the future (latest allowed ${latestDate}, Vancouver time)`);
-  if (strings.some((s) => HIDDEN.test(s))) say('text contains control or bidirectional-override characters');
+  for (const [k, v] of Object.entries(obj)) {
+    const hit = [k, ...shape(v).strings].map((x) => HIDDEN.exec(x)).find(Boolean);
+    if (hit) say(`"${k}" contains the invisible character U+${hit[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`);
+  }
   return out;
 }
 // Duplicate keys per object (so a second "entries" can't hide behind the first) and nesting depth.
@@ -223,7 +244,7 @@ function decode(buf, where) {
   catch { fail(`${where} is not valid UTF-8`); }
 }
 const parseLedger = (src) => {
-  try { return JSON.parse(src.replace(/^﻿/, '')); } catch (e) { fail(`${FILE} is not valid JSON: ${e.message}`); }
+  try { return JSON.parse(src.replace(/^\uFEFF/, '')); } catch (e) { fail(`${FILE} is not valid JSON: ${e.message}`); }
 };
 
 // Offsets of the '[' and ']' of a top-level array, found by scanning the raw text.
@@ -274,7 +295,7 @@ function insert(src, key, obj) {
 function build(src, ledger, array, obj) {
   const next = insert(src, array, obj);
   if (!same(parseLedger(next), { ...ledger, [array]: [...ledger[array], obj] })) fail('internal check failed: the edit would change existing content; nothing written');
-  const { dups, deepest } = scan(next.replace(/^﻿/, ''));
+  const { dups, deepest } = scan(next.replace(/^\uFEFF/, ''));
   if (dups.length) fail(`the line repeats a key: ${dups.join(', ')}`);
   if (deepest > MAX_DEPTH) fail(`the line is nested more than ${MAX_DEPTH} levels deep`);
   return next;
@@ -304,7 +325,7 @@ function receiptFiles(obj) {
 // One-line commit subject from checked fields, never carrying CI-skip markers.
 function message(array, obj) {
   const clip = (s, n = 60) => {
-    const t = [...String(s).replace(/\[\s*(skip|no)[\s-]*(ci|actions)\s*\]|\[\s*(ci|actions)[\s-]*skip\s*\]|skip-checks\s*:/gi, '').replace(/\s+/g, ' ').trim()];
+    const t = [...String(s).replace(/\[/g, '(').replace(/\]/g, ')').replace(/skip-checks\s*:/gi, 'skip-checks').replace(/\s+/g, ' ').trim()];
     return t.length > n ? t.slice(0, n - 1).join('') + '…' : t.join('');
   };
   const id = obj.id != null ? obj.id + ' ' : '';
@@ -331,7 +352,7 @@ function main(argv) {
   }
 
   let obj;
-  try { obj = JSON.parse(decode(readFileSync(path.resolve(input)), input).replace(/^﻿/, '')); }
+  try { obj = JSON.parse(decode(readFileSync(path.resolve(input)), input).replace(/^\uFEFF/, '')); }
   catch (e) { if (e instanceof Stop) throw e; fail(`cannot read ${input}: ${e.message}`); }
   if (!isObject(obj)) fail(`${input} must hold one JSON object`);
   if (!flags.has('--operator') && (OPERATOR_ONLY.includes(array) || obj.type === 'check' || obj.retracts != null)) {
@@ -350,6 +371,7 @@ function main(argv) {
     const src = decode(gitRaw('cat-file', 'blob', `${where === 'origin/main' ? 'origin/main' : 'HEAD'}:${FILE}`), FILE);
     const ledger = parseLedger(src);
     for (const k of ARRAYS) if (!Array.isArray(ledger[k])) fail(`${FILE} has no "${k}" array`);
+    if (ledger[array].some((x) => same(x, obj))) { console.log(`Already on ${where}: this exact line was appended earlier. Nothing to do.`); return; }
     const receipts = receiptFiles(obj);
     const found = [...problems(array, obj, ledger, vancouverDate(0)), ...receipts.problems];
     if (found.length) fail(`would not append to ${array}:\n  - ${found.join('\n  - ')}`);
@@ -364,14 +386,20 @@ function main(argv) {
   const token = `${process.pid} ${hostname()} ${Date.now()}`;
   let fd;
   for (let tries = 0; fd === undefined; tries++) {
-    try { fd = openSync(lock, 'wx'); } catch {
-      let owner = '';
-      try { owner = readFileSync(lock, 'utf8'); } catch { continue; }
+    if (tries > 3) fail(`could not take ${lock}; if no append is running, delete it`);
+    try { fd = openSync(lock, 'wx'); } catch (e) {
+      if (e.code !== 'EEXIST') fail(`cannot create ${lock}: ${e.code}`);
+      let owner = '', age = 0;
+      try { owner = readFileSync(lock, 'utf8'); age = Date.now() - statSync(lock).mtimeMs; } catch { continue; }
       const [pid, host] = owner.split(' ');
-      let alive = true;
-      if (host === hostname()) { try { process.kill(Number(pid), 0); } catch (e) { alive = e.code === 'EPERM'; } }
-      if (alive || tries > 2) fail(`another append is running (process ${pid} on ${host}); wait for it to finish`);
-      try { unlinkSync(lock); } catch { /* raced */ }
+      let stale = age > STALE_MS || (!owner.trim() && age > 60 * 1000) || (host === hostname() && Number(pid) === process.pid);
+      if (!stale && host === hostname()) { try { process.kill(Number(pid), 0); } catch (err) { stale = err.code !== 'EPERM'; } }
+      if (!stale) fail(`another append is running (process ${pid || '?'} on ${host || '?'}, started ${Math.round(age / 1000)}s ago); wait for it to finish`);
+      // Reclaim atomically: move the stale lock aside, and put it back if it changed in the meantime.
+      const aside = `${lock}.${process.pid}`;
+      try { renameSync(lock, aside); } catch { continue; }
+      if (readFileSync(aside, 'utf8') === owner) unlinkSync(aside);
+      else { try { renameSync(aside, lock); } catch { /* the newer owner will retry */ } }
     }
   }
   writeFileSync(fd, token);
@@ -392,7 +420,7 @@ function appendLocked(array, obj) {
   for (let attempt = 1; ; attempt++) {
     fetchMain();
     const ahead = Number(git('rev-list', '--count', 'origin/main..HEAD').trim());
-    if (ahead) fail(`local main has ${ahead} commit(s) that are not on origin (an append whose push failed?). Publish with "git push origin main" or drop with "git reset --keep origin/main", then run this again`);
+    if (ahead) fail(`local main has ${ahead} commit(s) that are not on origin (an append whose push failed?). Drop them, keeping receipt files, with "git reset --mixed origin/main && git checkout -- ${FILE}", then run this again`);
     // A receipt someone else already committed with the same bytes is theirs to bring in.
     for (const r of Array.isArray(obj.receipts) ? obj.receipts.filter((x) => typeof x === 'string' && RECEIPT.test(x)) : []) {
       if (gitOk('cat-file', '-e', `HEAD:${r}`) || !gitOk('cat-file', '-e', `origin/main:${r}`)) continue;
@@ -411,6 +439,7 @@ function appendLocked(array, obj) {
     const ledger = parseLedger(src);
     for (const k of ARRAYS) if (!Array.isArray(ledger[k])) fail(`${FILE} has no "${k}" array`);
 
+    if (ledger[array].some((x) => same(x, obj))) { console.log('Already on main: this exact line was appended earlier. Nothing to do.'); return; }
     const receipts = receiptFiles(obj);
     const found = [...problems(array, obj, ledger, vancouverDate(0)), ...receipts.problems];
     if (found.length) fail(`not appended to ${array}:\n  - ${found.join('\n  - ')}`);
@@ -428,12 +457,18 @@ function appendLocked(array, obj) {
       for (const step of steps) { try { step(); } catch (e) { console.error(`(cleanup) ${e.message}`); } }
     };
     try {
+      // Receipts are plain files: a photo copied from some devices arrives marked executable.
+      for (const r of receipts.add) chmodSync(path.join(root, r), 0o644);
       if (receipts.add.length) git('add', '--', ...receipts.add);
       writeFileSync(ledgerPath, next);
       git('commit', '--quiet', '--only', '-m', msg, '--', FILE, ...receipts.add);
       madeCommit = true;
-      if (git('rev-parse', 'HEAD~1').trim() !== start || git('rev-parse', `HEAD:${FILE}`).trim() !== hashOf(Buffer.from(next))) {
-        fail('the commit does not match the prepared ledger (a hook, a line-ending setting or another process changed it); undone');
+      // Exactly one changed ledger and the new receipts, all plain files: anything else is a hook or another process.
+      const touched = git('diff-tree', '-r', '--no-commit-id', '--no-renames', '--raw', 'HEAD~1', 'HEAD').trim().split('\n')
+        .map((l) => l.replace(/^:\d{6} (\d{6}) \S+ \S+ ([A-Z])\t/, '$2 $1 ')).sort().join('\n');
+      const expected = [`M 100644 ${FILE}`, ...receipts.add.map((r) => `A 100644 ${r}`)].sort().join('\n');
+      if (git('rev-parse', 'HEAD~1').trim() !== start || git('rev-parse', `HEAD:${FILE}`).trim() !== hashOf(Buffer.from(next)) || touched !== expected) {
+        fail('the commit does not match the prepared change (a hook, a line-ending setting or another process changed it); undone');
       }
     } catch (e) {
       undo();
