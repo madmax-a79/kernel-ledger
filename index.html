@@ -465,7 +465,8 @@
           return '<li>' + link(u, to && to.origin !== location.origin ? linkText(u) : String(u).split('/').pop()) + '</li>';
         }).join('');
         const meta = [];
-        const fx = e.fx_usd_per_cad ? esc(e.fx_usd_per_cad) + ' USD/CAD (Bank of Canada, ' + esc(e.date) + ')' : '';
+        // The rate's own date when it predates the line (weekends and holidays have no Bank of Canada rate).
+        const fx = e.fx_usd_per_cad ? esc(e.fx_usd_per_cad) + ' USD/CAD (Bank of Canada, ' + esc(e.fx_date || e.date) + ')' : '';
         if (e.amount_cad != null) meta.push(esc(cad(e.amount_cad)) + (fx ? ' at ' + fx : ''));
         else if (fx) meta.push('FX ' + fx);
         if (e.net_usd != null) meta.push('net ' + esc(usd(e.net_usd)));

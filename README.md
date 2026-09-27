@@ -71,6 +71,7 @@ Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correctio
 
 Field rules:
 
+- `fx_usd_per_cad` is 1 ÷ the Bank of Canada USD/CAD rate for the completion date. On a weekend or holiday, use the latest published rate and record its date as `fx_date`.
 - `net_usd` is the effect on cash: negative for a buy; for a sell it is gross minus `fees_usd` minus `shipping_usd`.
 - `est_value_usd` (buys only) is the lowest of the three sold comps minus selling fees and shipping — the Rule 13 figure. The page counts held items at this number.
 - A `sell` entry carries `"closes": "E001"` pointing at the buy it sells.

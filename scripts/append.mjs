@@ -161,6 +161,9 @@ function problems(array, obj, ledger, latestDate) {
     if (obj.comps != null && !(Array.isArray(obj.comps) && obj.comps.every(isUrl))) say('"comps" must be a list of http(s) links');
     if (obj.listing != null && !isUrl(obj.listing)) say('"listing" must be an http(s) link');
     if (obj.memo != null && !isObject(obj.memo)) say('"memo" must be an object');
+    // The Bank of Canada publishes no rate on weekends and holidays, so the rate can predate the line.
+    if (obj.fx_date != null && !(isDate(obj.fx_date) && !(isDate(obj.date) && obj.fx_date > obj.date))) say('"fx_date" is the Bank of Canada date of the rate, written YYYY-MM-DD, on or before "date"');
+    if (obj.fx_date != null && obj.fx_usd_per_cad == null) say('"fx_date" goes with "fx_usd_per_cad"');
     if (obj.receipts != null && !Array.isArray(obj.receipts)) say('"receipts" must be a list');
     else if (obj.receipts != null) {
       const seen = new Set();
