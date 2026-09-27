@@ -114,6 +114,14 @@
       "checks": "E001",
       "status": "flagged",
       "note": "Flag E001 est_value_usd 12.40 as overstated by ~US$9.21 (Controller primary). Buy/FX/receipt identity OK (LEGO 70779 bagged+manual, C$5, BoC 1.4145 on fx_date 2026-09-25 → 0.70696). Comps: of three cited solds, only 2026-07-29 complete US$20 is ≤60d and arguably same condition; 2026-08-12 is Pieces Only (no instructions — not same condition); 2026-07-26 is 63d — thin market. US$5 ship fails Canada Post consumer check from Vancouver: Tracked Packet USA ≤0.25 kg base C$16.28 + 23.5% packet fuel (week Sep 21–27, 2026) = C$20.11 ≈ US$14.21; domestic Regular Parcel ≤0.5 kg also ≳US$11 after 44.5% fuel. Recalc keeping LO3 $20 and 13% fees: 20×0.87−14.21 ≈ US$3.19. Floor overstatement vs cheapest USA Small Packet+fuel: ~US$2.95."
+    },
+    {
+      "id": "E001a",
+      "type": "correction",
+      "date": "2026-09-27",
+      "corrects": "E001",
+      "est_value_usd": 3.19,
+      "note": "Corrects E001 held value: Canada Post consumer rates (~US$14 tracked) replace assumed US$5 ship; LO3 US$20 − ~13% fees − ~US$14 ship = US$3.19 (was US$12.40; C003)."
     }
   ],
   "interventions": [
