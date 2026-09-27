@@ -9,6 +9,8 @@
 //   --operator   needed for the operator's lines: interventions, amendments, audits and
 //                retractions (it also allows Controller checks). Kernel never passes it.
 //   --controller needed for Controller checks; the Controller (kernel-controller) passes it.
+// Each flag works only when git's identity here is that account's. This only stops a bot trying;
+// the append-only guard, which checks who actually pushed, is the enforcement.
 //
 // Existing lines are never touched: the object is inserted as text just before the array's
 // closing bracket, so the commit diff shows only the new line. New receipt files named in
@@ -27,6 +29,8 @@ const MAX_DEPTH = 32;
 const RETRIES = 3; // when another push lands first
 const STALE_MS = 15 * 60 * 1000; // an append takes seconds; a lock this old was left by a crash
 const OPERATOR_ONLY = ['interventions', 'amendments', 'audits'];
+// The accounts these flags belong to (the guard names the same accounts).
+const FLAG_OWNERS = { '--operator': 'madmax-a79', '--controller': 'kernel-controller' };
 
 // ---- Ledger rules. The same block is in scripts/append.mjs and in the append-only guard
 // ---- (.github/workflows/append-only-guard.yml); change both together.
@@ -372,6 +376,17 @@ function main(argv) {
   catch { fail('run this inside the ledger repo'); }
   const branch = git('rev-parse', '--abbrev-ref', 'HEAD').trim();
   if (branch !== 'main') fail(`on branch "${branch}"; switch to main first`);
+
+  // A flag's identity: git's author name is the account, or its email is the account's GitHub no-reply address.
+  let ident = '';
+  try { ident = git('var', 'GIT_AUTHOR_IDENT').trim(); } catch { /* no identity configured */ }
+  const [, name = '', email = ''] = /^(.*?) <([^>]*)>/.exec(ident) || [];
+  for (const [flag, login] of Object.entries(FLAG_OWNERS)) {
+    const noreply = new RegExp(`^(\\d+\\+)?${login}@users\\.noreply\\.github\\.com$`, 'i');
+    if (flags.has(flag) && name.toLowerCase() !== login && !noreply.test(email)) {
+      fail(`${flag} is only for ${login}; git here commits as ${ident ? JSON.stringify(`${name} <${email}>`) : 'nobody (no identity configured)'}`);
+    }
+  }
 
   if (flags.has('--dry-run')) {
     // Check against the latest main without touching the checkout.

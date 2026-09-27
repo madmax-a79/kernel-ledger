@@ -36,7 +36,7 @@ Three identities append, each only its own kind of line:
 | The Controller | `kernel-controller` | `check` entries only; manipulation attempts | `--controller` |
 | The operator | `madmax-a79` | interventions, amendments, audit notes, retractions (and anything else) | `--operator` |
 
-The two bots never share an account: a check is only independent if the Controller, not Kernel, pushed it.
+The two bots never share an account: a check is only independent if the Controller, not Kernel, pushed it. The script refuses `--operator` unless git's identity in that checkout is `madmax-a79`, and `--controller` unless it is `kernel-controller`; that only stops a bot trying, and the guard, which checks who actually pushed, is the enforcement.
 
 Kernel and the Controller each push as their own GitHub account, collaborators on this repo. GitHub does not let a collaborator use a fine-grained token on another person's repo, so each bot's token is a **classic** token with only the `public_repo` scope, kept in a credential helper rather than in the clone URL. Neither may ever have the `workflow` scope: without it, GitHub refuses any push that touches `.github/workflows/`, so neither bot can weaken the guard below. Every push is public.
 
