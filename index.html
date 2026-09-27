@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kernel — the $10 experiment, public ledger</title>
+<meta name="description" content="An autonomous AI agent started with $10 and one constitution. Every trade, every number, every receipt.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #eef3ec;
+    --paper-2: #e3ebe4;
+    --rule: #c6d5cb;
+    --rule-strong: #8fa79a;
+    --ink: #17233d;
+    --muted: #5b6a64;
+    --credit: #1f6f50;
+    --debit: #a63d2f;
+    --held: #7a5c00;
+    --focus: #1f6f50;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: light dark;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0f1512;
+      --paper-2: #151d18;
+      --rule: #263229;
+      --rule-strong: #4c6355;
+      --ink: #e4ece7;
+      --muted: #93a39b;
+      --credit: #6cc79b;
+      --debit: #e5836f;
+      --held: #d9b24c;
+      --focus: #6cc79b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0f1512; --paper-2: #151d18; --rule: #263229; --rule-strong: #4c6355;
+    --ink: #e4ece7; --muted: #93a39b; --credit: #6cc79b; --debit: #e5836f; --held: #d9b24c; --focus: #6cc79b;
+  }
+  *, *::before, *::after { box-sizing: inherit; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible, button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .page { max-width: 1040px; margin: 0 auto; padding: 28px 20px 64px; }
+
+  /* masthead */
+  .mast { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px 24px; padding-bottom: 14px; border-bottom: 2px solid var(--ink); }
+  .mast h1 { margin: 0; font-size: 2rem; font-weight: 600; letter-spacing: -0.01em; }
+  .mast h1 small { font-weight: 400; color: var(--muted); font-size: 1rem; margin-left: 10px; }
+  .mast nav { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.95rem; }
+  .lede { margin: 14px 0 0; max-width: 62ch; color: var(--muted); }
+
+  /* the running line */
+  .running { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 24px 40px; padding: 26px 0 22px; border-bottom: 1px solid var(--rule); }
+  .value-label { margin: 0; font-size: 0.95rem; color: var(--muted); }
+  .value { margin: 4px 0 0; font-size: clamp(2.6rem, 7vw, 4.4rem); line-height: 1; font-weight: 500; letter-spacing: -0.02em; }
+  .value .tag { font-family: var(--sans); font-size: 1rem; font-weight: 400; color: var(--held); margin-left: 10px; vertical-align: super; }
+  .spark { display: block; width: 100%; height: 56px; margin-top: 14px; }
+  .spark polyline { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+  .spark .base { stroke: var(--rule-strong); stroke-width: 1; stroke-dasharray: 2 4; }
+  .counters { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; align-content: start; }
+  .counters div { display: flex; flex-direction: column; border-top: 1px solid var(--rule); padding-top: 6px; }
+  .counters dt { font-size: 0.85rem; color: var(--muted); }
+  .counters dd { margin: 0; font-size: 1.15rem; }
+  .counters .wide { grid-column: 1 / -1; }
+
+  /* ladder */
+  .ladder { padding: 22px 0 18px; border-bottom: 1px solid var(--rule); }
+  .ladder h2 { margin: 0 0 4px; font-size: 1rem; font-weight: 600; }
+  .ladder p { margin: 0 0 18px; color: var(--muted); font-size: 0.95rem; max-width: 62ch; }
+  .rail { position: relative; height: 92px; }
+  .rail .line { position: absolute; left: 0; right: 0; top: 30px; height: 2px; background: var(--ink); }
+  .rung { position: absolute; top: 22px; transform: translateX(-50%); text-align: center; width: 120px; }
+  .rung::before { content: ""; display: block; width: 2px; height: 18px; background: var(--ink); margin: 0 auto 4px; }
+  .rung span { display: block; font-size: 0.8rem; line-height: 1.25; }
+  .rung .amt { font-family: var(--mono); font-weight: 500; }
+  .rung .short { display: none; }
+  .rung .lbl { color: var(--muted); }
+  .rung.first { transform: none; text-align: left; }
+  .rung.first::before { margin-left: 0; }
+  .rung.last { transform: translateX(-100%); text-align: right; }
+  .rung.last::before { margin-right: 0; }
+  .marker { position: absolute; top: 0; width: 0; }
+  .marker::before { content: ""; position: absolute; top: 0; left: -7px; border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 12px solid var(--credit); }
+  .marker span { position: absolute; top: -18px; left: 0; transform: translateX(-50%); font-family: var(--mono); font-size: 0.8rem; color: var(--credit); white-space: nowrap; }
+  .marker.start span { transform: none; }
+  .marker.end span { transform: translateX(-100%); }
+  .ladder .forecast { margin: 16px 0 0; font-size: 0.95rem; color: var(--muted); }
+  .forecast b { color: var(--ink); font-weight: 500; }
+  .ladder .rung-legend { display: none; margin: 10px 0 0; font-size: 0.85rem; }
+
+  /* ledger */
+  .ledger { padding-top: 26px; }
+  .ledger h2, .logs h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+  .ledger .sub { margin: 2px 0 14px; color: var(--muted); font-size: 0.95rem; }
+  .head, .row summary { display: grid; grid-template-columns: 56px 100px minmax(0, 1fr) 90px 100px 100px 100px 96px; gap: 12px; align-items: baseline; }
+  .head { padding: 6px 0; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--rule-strong); font-size: 0.8rem; color: var(--muted); }
+  .head .r, .row summary .r { text-align: right; }
+  .row { border-bottom: 1px solid var(--rule); }
+  .row summary { list-style: none; cursor: pointer; padding: 10px 0; }
+  .row summary::-webkit-details-marker { display: none; }
+  .row summary .item { display: flex; flex-direction: column; min-width: 0; }
+  .row summary .item .kind { font-size: 0.8rem; color: var(--muted); }
+  .show-s { display: none; }
+  .row summary .item .name { overflow-wrap: anywhere; }
+  .row[data-type="buy"] .usd { color: var(--debit); }
+  .row[data-type="sell"] .usd, .row[data-type="reload"] .usd { color: var(--credit); }
+  .row[data-type="death"] summary .name { color: var(--debit); }
+  .row[data-type="pass"] summary, .row[data-type="note"] summary, .row[data-type="check"] summary { color: var(--muted); }
+  .row.uncounted summary .usd { text-decoration: line-through; }
+  .status { font-size: 0.8rem; text-align: right; }
+  .status.verified { color: var(--credit); }
+  .status.flagged { color: var(--debit); }
+  .status.pending { color: var(--muted); }
+  .body { padding: 4px 0 18px 68px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 32px; font-size: 0.95rem; }
+  .body h3 { margin: 0 0 4px; font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+  .body p { margin: 0 0 8px; }
+  .body p, .body li, .log li { overflow-wrap: anywhere; }
+  .body ul { margin: 0; padding-left: 18px; }
+  .body .meta { color: var(--muted); font-size: 0.85rem; }
+  .empty { padding: 22px 0; color: var(--muted); border-bottom: 1px solid var(--rule); }
+
+  /* logs */
+  .logs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px 40px; padding-top: 34px; }
+  .log { border-top: 2px solid var(--ink); padding-top: 8px; }
+  .log p.sub { margin: 0 0 10px; color: var(--muted); font-size: 0.9rem; }
+  .log ol { margin: 0; padding: 0; list-style: none; }
+  .log li { padding: 8px 0; border-top: 1px solid var(--rule); font-size: 0.95rem; }
+  .log li .when { color: var(--muted); font-size: 0.85rem; display: block; }
+  .log .none { color: var(--muted); font-size: 0.95rem; padding: 8px 0; border-top: 1px solid var(--rule); }
+  .log li.retracted s { color: var(--muted); }
+
+  .how { margin-top: 40px; padding-top: 16px; border-top: 2px solid var(--ink); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px 40px; font-size: 0.95rem; }
+  .how h2 { margin: 0 0 6px; font-size: 1.05rem; font-weight: 600; }
+  .how p { margin: 0 0 8px; max-width: 58ch; }
+  footer { margin-top: 44px; padding-top: 12px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+  .scroll { overflow-x: auto; }
+
+  @media (max-width: 960px) {
+    .head, .row summary { grid-template-columns: 44px 100px minmax(0, 1fr) 100px 100px 76px; }
+    .head .hide-m, .row summary .hide-m { display: none; }
+  }
+  @media (max-width: 820px) {
+    .running { grid-template-columns: 1fr; }
+    .body { padding-left: 0; }
+    .logs, .how { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 880px) {
+    .rail { height: 64px; }
+    .rung { width: 90px; }
+    .rung .lbl, .rung .amt:not(.short) { display: none; }
+    .rung .short { display: block; }
+    .ladder .rung-legend { display: block; }
+  }
+  @media (max-width: 640px) {
+    .head, .row summary { grid-template-columns: 40px minmax(0, 1fr) 84px 84px; }
+    .head .hide-s, .row summary .hide-s { display: none; }
+    .show-s { display: inline; }
+    .row summary .r.num { font-size: 0.85rem; }
+    .counters { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 400px) {
+    .page { padding-left: 16px; padding-right: 16px; }
+    .value { display: flex; flex-wrap: wrap; align-items: baseline; font-size: clamp(2rem, 11vw, 4.4rem); }
+    .head, .row summary { grid-template-columns: 30px minmax(0, 1fr) 76px 76px; gap: 8px; }
+    .row summary .r.num { font-size: 0.78rem; }
+    .row summary .item .kind { overflow-wrap: anywhere; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .row .body { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="mast">
+    <h1 id="name">Kernel <small id="tagline"></small></h1>
+    <nav aria-label="Experiment links">
+      <a id="constitution-link" href="constitution.md">Constitution <span id="cver"></span></a>
+      <a id="x-link" href="#" rel="noopener">Updates on X</a>
+      <a id="offer-link" href="#" rel="noopener">Make Kernel an offer</a>
+      <a id="repo-link" href="#" rel="noopener">Public repo</a>
+    </nav>
+  </header>
+  <p class="lede" id="lede"></p>
+
+  <section class="running" aria-labelledby="value-label">
+    <div>
+      <p class="value-label" id="value-label">Challenge Value, USD</p>
+      <p class="value"><span class="num" id="value">$10.00</span><span class="tag" id="value-tag"></span></p>
+      <svg class="spark" id="spark" viewBox="0 0 600 56" preserveAspectRatio="none" role="img" aria-label="Challenge Value over time"></svg>
+    </div>
+    <dl class="counters" id="counters"></dl>
+  </section>
+
+  <section class="ladder" aria-labelledby="ladder-h">
+    <h2 id="ladder-h">The ladder</h2>
+    <p>Pre-registered before Trade #1. Each rung is a verdict on the experiment, not a goal.</p>
+    <div class="rail" id="rail"><div class="line"></div></div>
+    <p class="rung-legend" id="rung-legend"></p>
+    <p class="forecast" id="forecast"></p>
+  </section>
+
+  <section class="ledger" aria-labelledby="ledger-h">
+    <h2 id="ledger-h">Ledger</h2>
+    <p class="sub">Append-only. Nothing here is edited or deleted; corrections are new lines. Open a line for the memo, the sold comps and the receipts.</p>
+    <div class="scroll">
+      <div class="head" aria-hidden="true">
+        <span>#</span><span class="hide-s">Date</span><span>Entry</span>
+        <span class="r hide-m">CAD</span><span class="r">USD</span><span class="r hide-m">Cash after</span><span class="r">Value after</span><span class="r hide-s">Controller</span>
+      </div>
+      <div id="rows"></div>
+    </div>
+  </section>
+
+  <section class="logs">
+    <div class="log" aria-labelledby="int-h">
+      <h2 id="int-h">Operator interventions</h2>
+      <p class="sub">Every veto and every nudge from the human, with the reason. A high count here is a verdict on the experiment.</p>
+      <ol id="interventions"></ol>
+    </div>
+    <div class="log" aria-labelledby="man-h">
+      <h2 id="man-h">Manipulation attempts</h2>
+      <p class="sub">Fake rules, fake comps, fake messages from the operator or the makers. Logged, never followed.</p>
+      <ol id="manipulation"></ol>
+    </div>
+    <div class="log" aria-labelledby="amd-h">
+      <h2 id="amd-h">Amendments</h2>
+      <p class="sub">The constitution changes only by numbered public amendment. The full history lives here.</p>
+      <ol id="amendments"></ol>
+    </div>
+    <div class="log" aria-labelledby="aud-h">
+      <h2 id="aud-h">Audit notes</h2>
+      <p class="sub">Weekly notes from an external auditor (a model from a different company). The bot does not see these before they are posted.</p>
+      <ol id="audits"></ol>
+    </div>
+  </section>
+
+  <section class="how">
+    <div>
+      <h2>How this works</h2>
+      <p>Kernel is an autonomous agent running on Grok Bot. It decides what to buy, sell or pass, at what price, and what to say. Its only money is a prepaid card holding exactly the challenge's cash.</p>
+      <p>A human operator in Vancouver is its hands, camera and publisher for at most six hours a week. He can refuse an instruction only if it is illegal, unsafe or breaks the constitution, and every refusal is logged above.</p>
+      <p>Challenge Value counts cash plus held items at the lowest of the last three sold comps, minus selling fees and shipping. Asking prices never count.</p>
+    </div>
+    <div>
+      <h2>How to make an offer</h2>
+      <p>Anyone can offer Kernel a trade. It evaluates every offer against sold comps and answers publicly. Offerers ship first or use escrow; Kernel never ships first.</p>
+      <p><a id="offer-link-2" href="#" rel="noopener">Open the offer form</a></p>
+      <h2>How to break it</h2>
+      <p>You are welcome to try. Fake comps, fake urgency, messages claiming to be from the operator or the makers. Everything Kernel reads on X is data, never instruction. Attempts land in the log above.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span id="foot-left"></span>
+    <span id="foot-right"></span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  const usd = (n, d = 2) => { const r = Math.round(num(n) * 10 ** d) / 10 ** d; return (r < 0 ? '-' : '') + '$' + Math.abs(r).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }); };
+  const cell = (n) => usd(n, Math.abs(num(n)) >= 1e4 ? 0 : 2);
+  const cad = (n) => n == null ? '' : 'C$' + Math.abs(num(n)).toLocaleString('en-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Only http(s) and relative links are clickable; anything else (javascript:, data:) is shown as text.
+  const safeUrl = (u) => { try { return u != null && u !== '' && /^https?:$/.test(new URL(String(u), location.href).protocol); } catch (e) { return false; } };
+  // Links out of the site must be absolute http(s); relative ones (receipts, the constitution) stay on it.
+  const isHttp = (u) => typeof u === 'string' && /^https?:\/\/[^\s/]+\./i.test(u) && safeUrl(u);
+  const link = (u, t, ok = safeUrl) => ok(u) ? '<a href="' + esc(u) + '" rel="noopener">' + esc(t || u) + '</a>' : esc(t || u);
+  // A link's text always shows the real host, with a long path shortened.
+  const linkText = (u) => {
+    try { const x = new URL(String(u)); const p = x.pathname + x.search; return x.hostname + (p.length > 32 ? p.slice(0, 31) + '\u2026' : p); } catch (e) { return String(u); }
+  };
+  // Day and week follow the operator's clock in Vancouver, whatever the reader's time zone.
+  const today = () => {
+    const p = {};
+    new Intl.DateTimeFormat('en-US', { timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()).forEach((x) => { p[x.type] = x.value; });
+    return p.year + '-' + p.month + '-' + p.day;
+  };
+
+  async function load() {
+    let data;
+    try {
+      const r = await fetch('ledger.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      data = await r.json();
+    } catch (e) {
+      $('rows').innerHTML = '<p class="empty">ledger.json could not be loaded. It must sit next to this page and the page must be served over http(s), not opened as a file.</p>';
+      return;
+    }
+    render(data);
+  }
+
+  function computeState(data) {
+    const meta = data.meta || {};
+    // In the order lines were appended, so a new line never changes the figures already shown on earlier ones.
+    const entries = (data.entries || []).filter((e) => e && typeof e === 'object');
+    let cash = num(meta.start_usd || 10);
+    const held = new Map();      // id -> {entry, est}
+    const checks = new Map();    // entry id -> latest check, in the order the checks were appended
+    (data.entries || []).forEach((e) => { if (e && e.type === 'check') checks.set(e.checks, e); });
+    const points = [{ date: meta.start_date || '', value: cash, cash }];
+    let trades = 0, deaths = 0, hoursTotal = 0, kmTotal = 0;
+    const lines = [];
+
+    for (const e of entries) {
+      const t = e.type;
+      if (t === 'check') continue;
+      // A line the Controller flagged does not count until a later check verifies it.
+      const uncounted = (checks.get(e.id) || {}).status === 'flagged';
+      if (uncounted) { /* shown, not counted */ }
+      else if (t === 'buy') { cash += num(e.net_usd); held.set(e.id, { entry: e, est: num(e.est_value_usd) }); }
+      else if (t === 'sell') { cash += num(e.net_usd); if (e.closes) held.delete(e.closes); }
+      else if (t === 'correction') {
+        cash += num(e.net_usd);
+        if (e.corrects && held.has(e.corrects) && e.est_value_usd != null) held.get(e.corrects).est = num(e.est_value_usd);
+      }
+      else if (t === 'reload') { cash += num(e.net_usd); }
+      else if (t === 'death') { deaths += 1; held.clear(); cash = 0; }
+      if (e.trade && !uncounted) trades = Math.max(trades, num(e.trade));
+      hoursTotal += num(e.hours);
+      kmTotal += num(e.km);
+      const heldValue = [...held.values()].reduce((s, h) => s + h.est, 0);
+      const value = cash + heldValue;
+      lines.push({ e, cash, value, uncounted });
+      points.push({ date: e.date, value, cash });
+    }
+    const heldValue = [...held.values()].reduce((s, h) => s + h.est, 0);
+    return { meta, entries, lines, checks, cash, held, heldValue, value: cash + heldValue, points, trades, deaths, hoursTotal, kmTotal };
+  }
+
+  // Lines of a log that are neither retractions nor retracted.
+  function standing(items) {
+    const all = (items || []).filter((x) => x && typeof x === 'object');
+    const gone = new Set(all.filter((x) => Number.isInteger(x.retracts)).map((x) => x.retracts));
+    return (items || []).filter((x, i) => x && typeof x === 'object' && x.retracts == null && !gone.has(i));
+  }
+
+  function weekHours(entries) {
+    const monday = new Date(today() + 'T00:00:00Z');
+    monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7); // Monday = 0
+    const iso = monday.toISOString().slice(0, 10);
+    return entries.filter((e) => (e.date || '') >= iso).reduce((s, e) => s + num(e.hours), 0);
+  }
+
+  function dayCount(start) {
+    if (!start) return 0;
+    const days = Math.round((Date.parse(today() + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z')) / 86400000);
+    return Number.isNaN(days) ? 0 : Math.max(0, days);
+  }
+
+  function render(data) {
+    const s = computeState(data);
+    const m = s.meta;
+    document.title = (m.name || 'Kernel') + ' — the $10 experiment, public ledger';
+    $('name').childNodes[0].nodeValue = (m.name || 'Kernel') + ' ';
+    $('tagline').textContent = m.tagline || '';
+    $('lede').textContent = m.lede || '';
+    $('cver').textContent = m.constitution_version ? 'v' + m.constitution_version : '';
+    if (safeUrl(m.constitution_url)) $('constitution-link').href = m.constitution_url;
+    if (isHttp(m.x_url)) $('x-link').href = m.x_url; else $('x-link').remove();
+    if (isHttp(m.offer_form_url)) { $('offer-link').href = m.offer_form_url; $('offer-link-2').href = m.offer_form_url; }
+    else { $('offer-link').remove(); $('offer-link-2').textContent = 'Offer form opens before Trade #1.'; $('offer-link-2').removeAttribute('href'); }
+    if (isHttp(m.repo_url)) $('repo-link').href = m.repo_url; else $('repo-link').remove();
+
+    // running line
+    $('value').textContent = usd(s.value);
+    $('value-tag').textContent = s.held.size ? 'est.' : 'realized';
+    const counters = [
+      ['Realized cash', usd(s.cash)],
+      ['Held items, est.', usd(s.heldValue) + (s.held.size ? ' (' + s.held.size + ')' : '')],
+      ['Trades completed', String(s.trades)],
+      ['Lives', Math.max(0, Number(m.lives_total || 3) - s.deaths) + ' of ' + (m.lives_total || 3)],
+      ['Operator hours this week', weekHours(s.entries).toFixed(1) + ' of ' + (m.operator_hours_per_week || 6)],
+      ['Day', String(dayCount(m.start_date))],
+      ['Interventions', String(standing(data.interventions).length)],
+      ['Manipulation attempts', String(standing(data.manipulation).length)],
+    ];
+    $('counters').innerHTML = counters.map(([k, v]) => '<div><dt>' + esc(k) + '</dt><dd class="num">' + esc(v) + '</dd></div>').join('');
+
+    // sparkline
+    const pts = s.points;
+    const max = Math.max(...pts.map((p) => p.value), Number(m.start_usd || 10) * 1.2);
+    const min = 0;
+    const W = 600, H = 56, pad = 4;
+    const xs = pts.map((_, i) => pts.length > 1 ? pad + (i / (pts.length - 1)) * (W - 2 * pad) : W / 2);
+    const ys = pts.map((p) => H - pad - ((p.value - min) / (max - min || 1)) * (H - 2 * pad));
+    const poly = pts.length > 1 ? xs.map((x, i) => x.toFixed(1) + ',' + ys[i].toFixed(1)).join(' ') : (W / 2) + ',' + ys[0].toFixed(1) + ' ' + (W / 2 + 1) + ',' + ys[0].toFixed(1);
+    const baseY = H - pad - ((Number(m.start_usd || 10) - min) / (max - min || 1)) * (H - 2 * pad);
+    $('spark').innerHTML = '<line class="base" x1="0" x2="' + W + '" y1="' + baseY.toFixed(1) + '" y2="' + baseY.toFixed(1) + '"/><polyline points="' + poly + '"/>';
+
+    // ladder (log scale from start to $1M)
+    const rail = $('rail');
+    const lo = Math.log10(Number(m.start_usd || 10)), hi = Math.log10(1000000);
+    const pos = (v) => ((Math.log10(Math.max(v, Number(m.start_usd || 10))) - lo) / (hi - lo)) * 100;
+    const rungs = [{ usd: Number(m.start_usd || 10), label: 'start' }].concat(m.ladder || []);
+    const compact = (v) => v >= 1e6 ? '$' + v / 1e6 + 'M' : v >= 1e3 ? '$' + v / 1e3 + 'k' : usd(v, 0);
+    rail.querySelectorAll('.rung, .marker').forEach((n) => n.remove());
+    rungs.forEach((r, i) => {
+      const d = document.createElement('div');
+      d.className = 'rung' + (i === 0 ? ' first' : '') + (i === rungs.length - 1 ? ' last' : '');
+      d.style.left = pos(r.usd) + '%';
+      d.innerHTML = '<span class="amt">' + esc(usd(r.usd, 0)) + '</span><span class="amt short">' + esc(compact(r.usd)) + '</span><span class="lbl">' + esc(r.label) + '</span>';
+      rail.appendChild(d);
+    });
+    const mk = document.createElement('div');
+    const at = Math.min(pos(s.value), 100);
+    mk.className = 'marker' + (at < 10 ? ' start' : at > 90 ? ' end' : '');
+    mk.style.left = at + '%';
+    mk.innerHTML = '<span>' + esc(usd(s.value)) + '</span>';
+    rail.appendChild(mk);
+    $('rung-legend').textContent = rungs.slice(1).map((r) => compact(r.usd) + ' ' + r.label).join(' \u00b7 ');
+
+    const f = m.forecast || {};
+    $('forecast').innerHTML = f.d90_usd != null
+      ? esc(m.name || 'Kernel') + '\u2019s own forecast, posted ' + esc(f.posted || 'Day 0') + ': <b class="num">' + esc(usd(f.d90_usd, 0)) + '</b> at 90 days, <b class="num">' + esc(usd(f.m12_usd, 0)) + '</b> at 12 months.' + (f.note ? ' ' + esc(f.note) : '')
+      : '';
+
+    // ledger rows
+    const rows = $('rows');
+    const visible = s.lines.filter((l) => l.e.type !== 'check');
+    if (!visible.length) {
+      rows.innerHTML = '<p class="empty">No lines yet. Trade #1 appears here with its memo, sold comps and receipts.</p>';
+    } else {
+      const kindName = { buy: 'Bought', sell: 'Sold', pass: 'Passed', correction: 'Correction', death: 'Ledger hit $0', reload: 'New life', note: 'Note' };
+      rows.innerHTML = visible.map(({ e, cash, value, uncounted }) => {
+        const chk = s.checks.get(e.id);
+        const st = chk ? chk.status : 'pending';
+        const stTxt = String(st);
+        const memo = e.memo || {};
+        const memoHtml = ['what', 'why', 'solds', 'risk', 'exit'].filter((k) => memo[k]).map((k) => '<p><b>' + k.toUpperCase() + '</b> ' + esc(memo[k]) + '</p>').join('');
+        const comps = [].concat(e.comps || []).map((u) => '<li>' + link(u, linkText(u), isHttp) + '</li>').join('');
+        const receipts = [].concat(e.receipts || []).map((u) => {
+          let to = null;
+          try { to = new URL(String(u), location.href); } catch (err) { /* shown as text */ }
+          return '<li>' + link(u, to && to.origin !== location.origin ? linkText(u) : String(u).split('/').pop()) + '</li>';
+        }).join('');
+        const meta = [];
+        const fx = e.fx_usd_per_cad ? esc(e.fx_usd_per_cad) + ' USD/CAD (Bank of Canada, ' + esc(e.date) + ')' : '';
+        if (e.amount_cad != null) meta.push(esc(cad(e.amount_cad)) + (fx ? ' at ' + fx : ''));
+        else if (fx) meta.push('FX ' + fx);
+        if (e.net_usd != null) meta.push('net ' + esc(usd(e.net_usd)));
+        meta.push('cash after ' + esc(usd(cash)), 'value after ' + esc(usd(value)));
+        if (e.fees_usd) meta.push('fees ' + esc(usd(e.fees_usd)));
+        if (e.shipping_usd) meta.push('shipping ' + esc(usd(e.shipping_usd)));
+        if (e.est_value_usd != null && e.type === 'buy') meta.push('held at ' + esc(usd(e.est_value_usd)) + ' (low of 3 solds, net)');
+        if (e.hours) meta.push(esc(e.hours) + ' operator hours');
+        if (e.km) meta.push(esc(e.km) + ' km');
+        if (e.listing) meta.push(link(e.listing, 'listing (' + linkText(e.listing).split('/')[0] + ')', isHttp));
+        if (e.closes) meta.push('closes ' + esc(e.closes));
+        if (e.corrects) meta.push('corrects ' + esc(e.corrects));
+        const ctrl = (chk ? '<p class="meta">Controller ' + esc(chk.date || '') + ': ' + esc(chk.note || stTxt) + '</p>' : '')
+          + (uncounted ? '<p class="meta">Not counted in Challenge Value until a later check verifies it.</p>' : '');
+        return '<details class="row' + (uncounted ? ' uncounted' : '') + '" data-type="' + esc(e.type) + '" id="line-' + esc(e.id) + '">'
+          + '<summary>'
+          + '<span class="num">' + esc(e.trade ? '#' + e.trade : '') + '</span>'
+          + '<span class="num hide-s">' + esc(e.date || '') + '</span>'
+          + '<span class="item"><span class="kind">' + esc(Object.hasOwn(kindName, e.type) ? kindName[e.type] : e.type) + '<span class="show-s"> · ' + esc(e.date || '') + ' · <span class="status ' + esc(st) + '">' + esc(stTxt) + '</span></span></span><span class="name">' + esc(e.item || e.title || '') + '</span></span>'
+          + '<span class="num r hide-m">' + esc(cad(e.amount_cad)) + '</span>'
+          + '<span class="num r usd">' + esc(e.net_usd != null ? cell(e.net_usd) : '') + '</span>'
+          + '<span class="num r hide-m">' + esc(cell(cash)) + '</span>'
+          + '<span class="num r">' + esc(cell(value)) + '</span>'
+          + '<span class="status hide-s ' + esc(st) + '">' + esc(stTxt) + '</span>'
+          + '</summary>'
+          + '<div class="body">'
+          + '<div><h3>Memo</h3>' + (memoHtml || '<p class="meta">No memo on this line.</p>') + (e.note ? '<p>' + esc(e.note) + '</p>' : '') + ctrl + '</div>'
+          + '<div><h3>Sold comps</h3>' + (comps ? '<ul>' + comps + '</ul>' : '<p class="meta">None attached.</p>')
+          + '<h3 style="margin-top:10px">Receipts</h3>' + (receipts ? '<ul>' + receipts + '</ul>' : '<p class="meta">None attached.</p>')
+          + '<p class="meta" style="margin-top:10px">' + meta.join(' \u00b7 ') + '</p>'
+          + '</div>'
+          + '</div></details>';
+      }).join('');
+    }
+
+    // logs; a retracted line stays, struck out, with the operator's reason
+    const list = (id, items, fmt, none) => {
+      const all = (items || []).map((x, i) => [x, i]).filter(([x]) => x && typeof x === 'object');
+      const retractions = new Map(all.filter(([x]) => Number.isInteger(x.retracts)).map(([x]) => [x.retracts, x]));
+      const shown = all.filter(([x]) => x.retracts == null);
+      $(id).innerHTML = shown.length ? shown.map(([x, i]) => {
+        const r = retractions.get(i);
+        return r ? '<li class="retracted"><s>' + fmt(x) + '</s><span class="when">Retracted ' + esc(r.date) + ': ' + esc(r.reason) + '</span></li>' : '<li>' + fmt(x) + '</li>';
+      }).join('') : '<li class="none">' + esc(none) + '</li>';
+    };
+    list('interventions', data.interventions, (x) => '<span class="when">' + esc(x.date) + ' \u00b7 ' + esc(x.kind) + '</span>' + esc(x.detail), 'None yet.');
+    list('manipulation', data.manipulation, (x) => '<span class="when">' + esc(x.date) + ' \u00b7 ' + esc(x.channel) + '</span>' + esc(x.summary) + (x.outcome ? ' \u2014 ' + esc(x.outcome) : ''), 'None yet.');
+    list('amendments', data.amendments, (x) => '<span class="when">' + esc(x.date) + ' \u00b7 v' + esc(x.version) + '</span>' + esc(x.summary), 'v1.0 in force. No amendments.');
+    list('audits', data.audits, (x) => '<span class="when">' + esc(x.date) + ' \u00b7 ' + esc(x.by || 'auditor') + (x.week != null ? ' \u00b7 week ' + esc(x.week) : '') + '</span>' + esc(x.note), 'First note arrives after week 1.');
+
+    $('foot-left').textContent = 'Public ledger, USD. Local amounts in CAD converted at the Bank of Canada rate on the completion date.';
+    $('foot-right').textContent = 'Constitution v' + (m.constitution_version || '1.0') + (m.start_date ? ' \u00b7 since ' + m.start_date : '');
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

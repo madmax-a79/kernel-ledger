@@ -1,0 +1,454 @@
+name: append-only guard
+
+# Fails when ledger.json loses its append-only history: any commit that edits, removes or
+# reorders an existing line in entries, interventions, manipulation, amendments or audits, leaves
+# the file invalid, or appends a line that breaks the ledger rules (the same rules as
+# scripts/append.mjs). Every commit since the last one a finished run of this guard checked is
+# covered, so pushes whose run was skipped or cancelled are caught by the next run or the daily one.
+#
+# Pushes by APPEND_ONLY_ACTORS (Kernel), as recorded in GitHub's push log, are held to more: they
+# may only append entries that are not Controller checks and manipulation attempts, and add new
+# receipt photos or PDFs; they may not touch meta or any other file.
+#
+# The check is inline, not a script in the repo: GitHub refuses pushes that touch
+# .github/workflows/ from a token without the "workflow" scope, so Kernel cannot weaken it.
+# It reports after a push; main is also protected against force pushes and deletion.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 9 * * *' # daily, for pushes whose run never happened
+  workflow_dispatch: # re-check the whole history from the first commit
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  guard:
+    name: ledger.json is append-only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check every commit not yet checked
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          FORCED: ${{ github.event.forced }}
+          EVENT: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+          APPEND_ONLY_ACTORS: kernel-agent
+        run: |
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync } from 'node:fs';
+
+          const FILE = 'ledger.json';
+          const MAX_DEPTH = 32;
+          const WORKFLOW = 'append-only-guard.yml';
+          const env = process.env;
+          const errors = new Set();
+          const notes = [];
+
+          // ---- Ledger rules. The same block is in scripts/append.mjs and in the append-only guard
+          // ---- (.github/workflows/append-only-guard.yml); change both together.
+          const ARRAYS = ['entries', 'interventions', 'manipulation', 'amendments', 'audits'];
+          const TYPES = ['buy', 'sell', 'pass', 'correction', 'death', 'reload', 'note', 'check'];
+          const STATUSES = ['verified', 'flagged'];
+          // Numbers the page does arithmetic with, and the lowest value each may take.
+          const NUMBERS = { trade: 1, amount_cad: 0, fx_usd_per_cad: 0, amount_usd: 0, net_usd: -Infinity, est_value_usd: 0, fees_usd: 0, shipping_usd: 0, hours: 0, km: 0 };
+          // What each log line on the page shows; without these the line renders blank.
+          const LOG_FIELDS = { interventions: ['date', 'kind', 'detail'], manipulation: ['date', 'channel', 'summary'], amendments: ['version', 'date', 'summary'], audits: ['date', 'note'] };
+          const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+          // Photos, screenshots and PDFs only: nothing a browser would run on the ledger's own site.
+          const RECEIPT = /^receipts\/[A-Za-z0-9][A-Za-z0-9._-]*\.(jpe?g|png|webp|gif|heic|pdf)$/;
+          // Control characters other than tab and newline, and bidirectional overrides.
+          const HIDDEN = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/;
+
+          const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
+          const text = (v) => typeof v === 'string' && v.trim() !== '';
+          const isDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s + 'T00:00:00Z')) && new Date(s + 'T00:00:00Z').toISOString().startsWith(s);
+          const isUrl = (s) => typeof s === 'string' && /^https?:\/\/[^\s\\/?#]+\.[^\s\\/?#]+([/?#][^\s\\]*)?$/i.test(s);
+
+          // Deep equality of parsed JSON; iterative, so no nesting can overflow the stack.
+          function same(a, b) {
+            const todo = [[a, b]];
+            while (todo.length) {
+              const [x, y] = todo.pop();
+              if (x === y) continue;
+              if (typeof x !== 'object' || typeof y !== 'object' || x === null || y === null || Array.isArray(x) !== Array.isArray(y)) return false;
+              const kx = Object.keys(x);
+              if (kx.length !== Object.keys(y).length) return false;
+              for (const k of kx) {
+                if (!Object.hasOwn(y, k)) return false;
+                todo.push([x[k], y[k]]);
+              }
+            }
+            return true;
+          }
+
+          // Nesting depth of a parsed value, and every string (keys included) in it; both iterative.
+          function shape(v) {
+            let depth = 0;
+            const found = [], todo = [[v, 0]];
+            while (todo.length) {
+              const [x, d] = todo.pop();
+              if (typeof x === 'string') found.push(x);
+              else if (x && typeof x === 'object') {
+                depth = Math.max(depth, d + 1);
+                for (const [k, y] of Object.entries(x)) { if (!Array.isArray(x)) found.push(k); todo.push([y, d + 1]); }
+              }
+            }
+            return { depth, strings: found };
+          }
+
+          // The calendar date in Vancouver, where the operator's clock runs, `days` from now.
+          function vancouverDate(days = 0) {
+            const p = {};
+            new Intl.DateTimeFormat('en-US', { timeZone: 'America/Vancouver', year: 'numeric', month: '2-digit', day: '2-digit' })
+              .formatToParts(new Date(Date.now() + days * 86400000)).forEach((x) => { p[x.type] = x.value; });
+            return `${p.year}-${p.month}-${p.day}`;
+          }
+
+          // Everything wrong with appending obj to ledger[array]; empty when it may be appended.
+          function problems(array, obj, ledger, latestDate) {
+            const out = [];
+            const say = (p) => out.push(p);
+            if (!isObject(obj)) return ['it is not a JSON object'];
+            const { depth, strings } = shape(obj);
+            if (depth > 8) return [`it is nested ${depth} levels deep; a ledger line needs at most 8`];
+            const need = (k) => { if (!text(obj[k])) say(`missing "${k}" (text)`); };
+            const meta = isObject(ledger.meta) ? ledger.meta : {};
+            const items = ledger[array].filter(isObject);
+            if (obj.id != null && !(typeof obj.id === 'string' && ID.test(obj.id))) say('"id" may use letters, digits, ".", "_" and "-" (at most 40), e.g. E001');
+
+            if (array === 'entries') {
+              ['id', 'type', 'date'].forEach(need);
+              const byId = new Map(items.map((e) => [String(e.id).toLowerCase(), e]));
+              const count = (t) => items.filter((e) => e.type === t).length;
+              const lives = Number(meta.lives_total || 3), startUsd = Number(meta.start_usd || 10);
+              const num = (k) => { if (typeof obj[k] !== 'number') say(`missing "${k}" (number)`); };
+              const ref = (k, types) => {
+                if (!text(obj[k])) { say(`missing "${k}"`); return null; }
+                const e = byId.get(obj[k].toLowerCase());
+                if (!e || e.id !== obj[k]) { say(`"${k}": no entry with id ${JSON.stringify(obj[k])}`); return null; }
+                if (types && !types.includes(e.type)) { say(`"${k}": ${e.id} is a ${e.type}, not a ${types.join(' or ')}`); return null; }
+                if (isDate(e.date) && isDate(obj.date) && obj.date < e.date) say(`dated before ${e.id} (${e.date}), which it refers to`);
+                return e;
+              };
+              if (typeof obj.id === 'string' && byId.has(obj.id.toLowerCase())) say(`an entry with id ${JSON.stringify(byId.get(obj.id.toLowerCase()).id)} already exists`);
+              if (text(obj.type) && !TYPES.includes(obj.type)) say(`"type" must be one of: ${TYPES.join(', ')}`);
+              switch (obj.type) {
+                case 'buy':
+                  num('net_usd'); num('est_value_usd');
+                  if (obj.net_usd > 0) say('a buy spends cash, so "net_usd" must be 0 or negative');
+                  break;
+                case 'sell': {
+                  num('net_usd');
+                  const buy = ref('closes', ['buy']);
+                  if (buy && items.some((e) => e.type === 'sell' && e.closes === buy.id)) say(`"closes": ${buy.id} was already sold`);
+                  break;
+                }
+                case 'correction':
+                  ref('corrects');
+                  break;
+                case 'death':
+                  if (count('death') > count('reload')) say('already dead: the next life starts with a reload');
+                  if (count('death') >= lives) say(`all ${lives} lives are used`);
+                  break;
+                case 'reload':
+                  if (obj.net_usd !== startUsd) say(`a reload carries "net_usd": ${startUsd}`);
+                  if (count('reload') >= count('death')) say('a reload needs a death entry first');
+                  if (count('death') >= lives) say(`all ${lives} lives are used`);
+                  break;
+                case 'check':
+                  ref('checks', TYPES.filter((t) => t !== 'check'));
+                  need('status');
+                  if (text(obj.status) && !STATUSES.includes(obj.status)) say(`"status" must be one of: ${STATUSES.join(', ')}`);
+                  break;
+              }
+              for (const [k, min] of Object.entries(NUMBERS)) {
+                if (obj[k] == null) continue;
+                if (typeof obj[k] !== 'number' || !Number.isFinite(obj[k])) say(`"${k}" must be a number`);
+                else if (obj[k] < min) say(`"${k}" must be at least ${min}`);
+              }
+              const lastTrade = Math.max(0, ...items.map((e) => (Number.isInteger(e.trade) ? e.trade : 0)));
+              if (obj.trade != null && !(Number.isInteger(obj.trade) && obj.trade <= lastTrade + 1)) say(`"trade" must be a whole number no higher than ${lastTrade + 1}`);
+              if (obj.comps != null && !(Array.isArray(obj.comps) && obj.comps.every(isUrl))) say('"comps" must be a list of http(s) links');
+              if (obj.listing != null && !isUrl(obj.listing)) say('"listing" must be an http(s) link');
+              if (obj.memo != null && !isObject(obj.memo)) say('"memo" must be an object');
+              if (obj.receipts != null && !(Array.isArray(obj.receipts) && obj.receipts.every((r) => isUrl(r) || (typeof r === 'string' && RECEIPT.test(r))))) {
+                say('"receipts" must be http(s) links or receipts/<name>.jpg, .jpeg, .png, .webp, .gif, .heic or .pdf');
+              }
+              if (isDate(obj.date) && isDate(meta.start_date) && obj.date < meta.start_date) say(`"date" is before the start date ${meta.start_date}`);
+            } else if (obj.retracts != null) {
+              // An operator line that retracts an earlier line of the same log, which stays visible, struck out.
+              need('date'); need('reason');
+              const target = Number.isInteger(obj.retracts) ? ledger[array][obj.retracts] : undefined;
+              if (!isObject(target) || target.retracts != null) say(`"retracts" must be the position (0 = first) of an existing ${array} line`);
+              else if (items.some((x) => x.retracts === obj.retracts)) say(`${array}[${obj.retracts}] is already retracted`);
+            } else {
+              LOG_FIELDS[array].forEach(need);
+              if (array === 'amendments' && text(obj.version) && !/^\d+(\.\d+)*$/.test(obj.version)) say('"version" is written like "1.1", without a "v"');
+              if (array === 'amendments' && items.some((x) => String(x.version) === String(obj.version))) say(`amendment v${obj.version} already exists`);
+              if (array === 'audits' && obj.week != null && !(Number.isInteger(obj.week) && obj.week >= 0)) say('"week" must be a whole number');
+              else if (array === 'audits' && obj.week != null && items.some((x) => x.week === obj.week)) say(`the audit note for week ${obj.week} already exists`);
+              if (items.some((x) => same(x, obj))) say(`this exact line is already in ${array}`);
+            }
+            if (array !== 'entries' && obj.id != null && items.some((x) => x.id === obj.id)) say(`${array} already has id ${JSON.stringify(obj.id)}`);
+            if (obj.date != null && !isDate(obj.date)) say('"date" must be a real date written YYYY-MM-DD');
+            else if (isDate(obj.date) && obj.date > latestDate) say(`"date" ${obj.date} is in the future (latest allowed ${latestDate}, Vancouver time)`);
+            if (strings.some((s) => HIDDEN.test(s))) say('text contains control or bidirectional-override characters');
+            return out;
+          }
+          // Duplicate keys per object (so a second "entries" can't hide behind the first) and nesting depth.
+          function scan(src) {
+            const stack = [], dups = [];
+            let deepest = 0;
+            for (let i = 0; i < src.length; i++) {
+              const c = src[i];
+              if (c === '"') {
+                let j = i + 1;
+                while (src[j] !== '"') j += src[j] === '\\' ? 2 : 1;
+                let k = j + 1;
+                while (/\s/.test(src[k])) k++;
+                const top = stack[stack.length - 1];
+                if (top && src[k] === ':') {
+                  const key = JSON.parse(src.slice(i, j + 1));
+                  if (top.has(key)) dups.push(key);
+                  top.add(key);
+                }
+                i = j;
+              } else if (c === '{' || c === '[') {
+                stack.push(c === '{' ? new Set() : null);
+                deepest = Math.max(deepest, stack.length);
+              } else if (c === '}' || c === ']') stack.pop();
+            }
+            return { dups: [...new Set(dups)], deepest };
+          }
+          // ---- end of ledger rules
+
+          const git = (...args) => execFileSync('git', args, { maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'] });
+          const out = (...args) => git(...args).toString('utf8');
+          const tryGit = (...args) => { try { return git(...args); } catch { return null; } };
+          const short = (sha) => sha.slice(0, 7);
+          const hasCommit = (sha) => tryGit('cat-file', '-e', `${sha}^{commit}`) !== null;
+          const isAncestor = (a, b) => tryGit('merge-base', '--is-ancestor', a, b) !== null;
+          const revList = (range) => out('rev-list', '--reverse', '--topo-order', range).split('\n').filter(Boolean);
+          // Ledger text is shown as inert code, never as Markdown or links.
+          const label = (o) => '`' + String(o?.id ?? o?.version ?? (o?.week != null ? 'week ' + o.week : o?.date ?? '?')).replace(/[`\r\n]/g, '').slice(0, 40) + '`';
+          const actors = (env.APPEND_ONLY_ACTORS || '').split(/[\s,]+/).filter(Boolean).map((a) => a.toLowerCase());
+          const appendOnly = (who) => !!who && actors.includes(who.toLowerCase());
+
+          // ledger.json at a commit: { missing } | { error } | { data, error? }. A ledger that parses but
+          // breaks a rule keeps its data, so what later commits do to it is still checked.
+          const cache = new Map();
+          function load(sha) {
+            if (!cache.has(sha)) cache.set(sha, parse(tryGit('cat-file', 'blob', `${sha}:${FILE}`)));
+            return cache.get(sha);
+          }
+          function parse(buf) {
+            if (buf == null) return { missing: true };
+            let src, data;
+            try { src = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return { error: 'is not valid UTF-8' }; }
+            try { data = JSON.parse(src); } catch (e) { return { error: `is not valid JSON (${e.message})` }; }
+            if (!isObject(data)) return { error: 'top level is not an object' };
+            const bad = ARRAYS.filter((k) => !Array.isArray(data[k]));
+            if (bad.length) return { error: `has ${bad.map((k) => `"${k}"`).join(', ')} missing or not an array` };
+            const { dups, deepest } = scan(src);
+            if (dups.length) return { data, error: `has duplicate keys: ${dups.map((k) => JSON.stringify(k)).join(', ')}` };
+            if (deepest > MAX_DEPTH) return { data, error: `is nested more than ${MAX_DEPTH} levels deep` };
+            return { data };
+          }
+
+          const parentsOf = (sha) => out('rev-list', '--parents', '-n', '1', sha).trim().split(' ').slice(1);
+
+          // Nearest commit at or above sha whose ledger parses, following first parents.
+          function lastGood(sha) {
+            for (let s = sha; s; s = parentsOf(s)[0]) {
+              const l = load(s);
+              if (l.data) return l.data;
+            }
+            return null;
+          }
+
+          // Existing objects must stay where they are, unchanged. Returns false if any moved.
+          function compare(before, after, where, merge) {
+            let ok = true;
+            for (const k of ARRAYS) {
+              const old = before[k], cur = after[k];
+              const changed = old.map((o, i) => i >= cur.length || !same(o, cur[i]));
+              const bad = changed.indexOf(true);
+              if (bad < 0) continue;
+              ok = false;
+              const more = changed.filter(Boolean).length - 1;
+              errors.add(`${where}: ${k}[${bad}] ${label(old[bad])} ${bad >= cur.length ? 'was removed' : 'was modified or moved'}`
+                + (more > 0 ? ` (and ${more} more existing ${k} lines)` : '')
+                + (merge ? ' in a merge; append-only needs a linear main, so rebase instead of merging' : ''));
+            }
+            return ok;
+          }
+
+          // Each appended line must follow the ledger rules, checked against the ledger as it stood
+          // before it; Kernel may append only its own kinds of line.
+          function checkAppended(before, after, where, who) {
+            const soFar = { ...after };
+            for (const k of ARRAYS) soFar[k] = before[k].slice();
+            const latest = vancouverDate(1);
+            for (const k of ARRAYS) {
+              for (const o of after[k].slice(before[k].length)) {
+                const bad = problems(k, o, soFar, latest);
+                if (bad.length) errors.add(`${where}: appended ${k} line ${label(o)}: ${bad.join('; ')}`);
+                if (appendOnly(who)) {
+                  if (!['entries', 'manipulation'].includes(k)) errors.add(`${where}: ${who} may not append to ${k}`);
+                  else if (isObject(o) && o.type === 'check') errors.add(`${where}: ${who} may not append Controller checks (${label(o)})`);
+                  if (isObject(o) && o.retracts != null) errors.add(`${where}: ${who} may not retract lines`);
+                }
+                soFar[k].push(o);
+              }
+            }
+          }
+
+          // What an append-only account may change in one commit: append to ledger.json, add new receipt files.
+          function checkFiles(c, parents, cur, who) {
+            if (cur.data) {
+              for (const p of parents) {
+                const base = lastGood(p);
+                if (!base) continue;
+                for (const k of new Set([...Object.keys(base), ...Object.keys(cur.data)])) {
+                  if (!ARRAYS.includes(k) && !same(base[k], cur.data[k])) errors.add(`${short(c)}: ${who} may not change "${k}" in ${FILE}`);
+                }
+              }
+            }
+            const tracked = parents.length ? out('ls-tree', '-r', '--name-only', parents[0], '--', 'receipts/').split('\n').filter(Boolean).map((p) => p.toLowerCase()) : [];
+            const raw = out('diff-tree', '-r', '-m', '--root', '--no-commit-id', '--no-renames', '--raw', '-z', c).split('\0');
+            for (let i = 0; i + 1 < raw.length; i += 2) {
+              const m = /^:\d{6} (\d{6}) [0-9a-f]+ [0-9a-f]+ ([A-Z])/.exec(raw[i]);
+              if (!m) continue;
+              const [, mode, status] = m, path = raw[i + 1];
+              const ok = mode === '100644' && ((path === FILE && status === 'M') || (status === 'A' && RECEIPT.test(path)));
+              const verb = { A: 'added', D: 'deleted', M: 'modified', T: 'changed the type of' }[status] || 'changed';
+              if (!ok) errors.add(`${short(c)}: ${who} may only append to ${FILE} and add new receipts/ photos or PDFs, but ${verb} ${JSON.stringify(path)}${mode !== '100644' && status !== 'D' ? ` as mode ${mode}` : ''}`);
+              else if (status === 'A' && tracked.includes(path.toLowerCase())) errors.add(`${short(c)}: ${JSON.stringify(path)} differs only in case from an existing receipt`);
+            }
+          }
+
+          const API = env.GH_TOKEN && env.REPO ? `https://api.github.com/repos/${env.REPO}/` : null;
+          async function api(path, pages = 1) {
+            const items = [];
+            let url = API + path;
+            for (let n = 0; url && n < pages; n++) {
+              const r = await fetch(url, { headers: { authorization: `Bearer ${env.GH_TOKEN}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' } });
+              if (!r.ok) throw new Error(`GitHub API answered ${r.status} for ${path.split('?')[0]}`);
+              const body = await r.json();
+              items.push(...(Array.isArray(body) ? body : body.workflow_runs || []));
+              url = /<([^>]+)>;\s*rel="next"/.exec(r.headers.get('link') || '')?.[1];
+            }
+            return items;
+          }
+
+          async function run() {
+            const after = env.AFTER || out('rev-parse', 'HEAD').trim();
+            let before = /^[0-9a-f]{40}$/.test(env.BEFORE || '') && !/^0+$/.test(env.BEFORE) ? env.BEFORE : null;
+            if (before && (env.FORCED === 'true' || !hasCommit(before) || !isAncestor(before, after))) {
+              errors.add(`History was rewritten: ${short(before)} is no longer in main's history (force push). Past ledger states must stay in history.`);
+              before = null;
+            }
+
+            // Start from the newest commit that an earlier run of this guard finished checking, so pushes
+            // whose run was skipped, cancelled or deleted are checked too.
+            let base = before, from = before ? `${short(before)}, the previous tip` : 'the first commit';
+            if (env.EVENT === 'workflow_dispatch') {
+              base = null;
+              from = 'the first commit (manual re-check)';
+            } else if (API) {
+              try {
+                const runs = (await api(`actions/workflows/${WORKFLOW}/runs?branch=main&status=completed&per_page=100`))
+                  .filter((r) => String(r.id) !== env.RUN_ID && ['success', 'failure'].includes(r.conclusion));
+                const last = runs.find((r) => hasCommit(r.head_sha) && isAncestor(r.head_sha, after));
+                if (last && last.head_sha !== before) {
+                  base = last.head_sha;
+                  from = `${short(base)}, the last commit a finished guard run covered`;
+                }
+              } catch (e) {
+                notes.push(`Could not list earlier guard runs (${e.message}); checked from ${from}.`);
+              }
+            } else {
+              notes.push('Not running on GitHub, so earlier runs and the push log were not consulted.');
+            }
+            const commits = revList(base ? `${base}..${after}` : after);
+            const inRange = new Set(commits);
+
+            // Who pushed each commit: this push's actor, and GitHub's push log for any earlier push in range.
+            const pusher = new Map();
+            if (env.EVENT === 'push') revList(before ? `${before}..${after}` : after).forEach((c) => pusher.set(c, env.ACTOR));
+            if (API && commits.length) {
+              try {
+                for (const a of await api('activity?ref=refs%2Fheads%2Fmain&per_page=100', 10)) {
+                  if (!inRange.has(a.after)) continue;
+                  const who = a.actor?.login || '?';
+                  if (['force_push', 'branch_deletion'].includes(a.activity_type)) errors.add(`main had a ${a.activity_type.replace('_', ' ')} by ${who} at ${a.timestamp}`);
+                  const range = /^0+$/.test(a.before) || !hasCommit(a.before) ? a.after : `${a.before}..${a.after}`;
+                  if (hasCommit(a.after)) revList(range).forEach((c) => { if (!pusher.has(c)) pusher.set(c, who); });
+                }
+              } catch (e) {
+                notes.push(`Could not read the push log (${e.message}); only this push's own account rules were applied.`);
+              }
+            }
+
+            for (const c of commits) {
+              const cur = load(c);
+              const parents = parentsOf(c);
+              const who = pusher.get(c);
+              if (appendOnly(who)) checkFiles(c, parents, cur, who);
+              if (cur.missing) {
+                if (parents.some((p) => lastGood(p))) errors.add(`${short(c)}: ${FILE} was deleted`);
+                continue;
+              }
+              if (cur.error) errors.add(`${short(c)}: ${FILE} ${cur.error}`);
+              if (!cur.data) continue;
+              if (!parents.length) checkAppended(Object.fromEntries(ARRAYS.map((k) => [k, []])), cur.data, short(c), who);
+              for (const p of parents) {
+                const prev = lastGood(p);
+                if (prev && compare(prev, cur.data, short(c), parents.length > 1)) checkAppended(prev, cur.data, short(c), who);
+              }
+            }
+
+            // End to end, the ledger must extend the one that was last checked.
+            const head = load(after);
+            const start = base ? lastGood(base) : null;
+            if (head.data && start) compare(start, head.data, `${short(base)}..${short(after)}`, false);
+
+            const lines = [`Checked ${commits.length} commit(s) from ${from} up to ${short(after)}.`];
+            const kernel = [...new Set([...pusher.values()].filter(appendOnly))];
+            if (kernel.length) lines.push(`Account rules applied to pushes by ${kernel.join(', ')}.`);
+            if (head.data) {
+              for (const k of ARRAYS) {
+                const added = head.data[k].slice(start ? start[k].length : 0);
+                if (added.length) lines.push(`- ${k}: +${added.length} (${added.slice(0, 20).map(label).join(', ')}${added.length > 20 ? ', ...' : ''})`);
+              }
+            }
+            return lines;
+          }
+
+          let lines = [];
+          try { lines = await run(); } catch (e) { errors.add(`The guard itself failed: ${String(e?.message || e).split('\n')[0]}`); }
+
+          const esc = (s) => s.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+          for (const e of errors) console.log(`::error title=append-only guard::${esc(e)}`);
+          const fence = (s) => s.replace(/```/g, "'''");
+          const summary = ['## append-only guard', errors.size ? `**Failed** (${errors.size})` : '**Passed**', '',
+            ...(errors.size ? ['```text', ...[...errors].map(fence), '```', ''] : []),
+            ...lines, ...notes.map((n) => `> ${n}`)].join('\n');
+          console.log(summary);
+          if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, summary + '\n');
+          process.exit(errors.size ? 1 : 0);
+          JS

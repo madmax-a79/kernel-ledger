@@ -1,0 +1,78 @@
+# Kernel ledger
+
+Static, single-page public ledger. `index.html` renders `ledger.json`. No backend, no build step. The git history of this repo is the audit trail: nothing is ever edited or deleted in place, so every commit is a public, timestamped append.
+
+## Deploy (15 minutes)
+
+1. Create a **public** GitHub repo (for example `kernel-ledger`) and push these files.
+2. Settings → Pages → Source: deploy from branch `main`, folder `/ (root)`.
+3. Point your domain at it: add a `CNAME` file containing the domain (for example `kernel.example.com`) and set a CNAME DNS record to `<your-github-user>.github.io`. Enable "Enforce HTTPS".
+4. Fill the empty fields in `ledger.json` → `meta`: `x_url`, `offer_form_url` (a Tally or Google Form is fine), `repo_url`. Set `start_date` to the date of the Day 0 post.
+
+Vercel or Netlify also work: import the repo, no build command, output directory `/`.
+
+Local preview: `python3 -m http.server 8080` in this folder, then open http://localhost:8080. Opening `index.html` as a file will not load `ledger.json`.
+
+## How Kernel appends (give it this routine once)
+
+```
+git clone https://github.com/madmax-a79/kernel-ledger.git
+# 1. put new receipt files in receipts/, named receipts/E003-photo.jpg and so on
+#    (photo, payment proof, listing screenshot: .jpg .jpeg .png .webp .gif .heic or .pdf)
+# 2. write the new line to a file holding one JSON object, e.g. E003.json
+node scripts/append.mjs entries E003.json --dry-run   # checks it against the latest main
+node scripts/append.mjs entries E003.json             # validates, commits "E003 sell …" with its receipts, pushes
+```
+
+`scripts/append.mjs` never edits existing lines. It inserts the new object as text just before the array's closing bracket and re-reads the file to prove nothing else changed, so each commit's diff is exactly one new line. It works for every log: `entries`, `interventions`, `manipulation`, `amendments`, `audits`. If someone else pushed first, it re-applies on top and retries. Dates are Vancouver calendar dates (`TZ=America/Vancouver date +%F`).
+
+Kernel appends entries and manipulation attempts only. Interventions, amendments, audit notes, Controller checks and retractions belong to the operator, who adds `--operator`; Kernel never does.
+
+Kernel pushes as its own GitHub account, `kernel-agent`, a collaborator on this repo. GitHub does not let a collaborator use a fine-grained token on another person's repo, so Kernel's token is a **classic** token with only the `public_repo` scope, kept in a credential helper rather than in the clone URL. It must never have the `workflow` scope: without it, GitHub refuses any push that touches `.github/workflows/`, so Kernel cannot weaken the guard below. Every push is public.
+
+Every push to `main` runs the **append-only guard** (GitHub Actions), and it also runs daily. It fails, publicly, if any commit since the last checked one edits, removes or reorders an existing object in `entries`, `interventions`, `manipulation`, `amendments` or `audits`, leaves `ledger.json` invalid, or appends a line that breaks the rules below (the same rules as the script, so pushing by hand gains nothing). A push whose run was skipped or cancelled is caught by the next run. Pushes by `kernel-agent`, as recorded in GitHub's push log, are held to more: they may only append entries (not Controller checks) and manipulation attempts, and add new receipt files; they may not touch `meta` or any other file. Editing or deleting an existing entry is a wall breach (Rule 12) and is visible in the commit history; corrections are new entries with `"type": "correction"`. The guard reports after a push, it does not stop one, so `main` is also protected against force pushes and deletion. Keep `main` linear: `git pull --rebase`, never a merge that interleaves two appends.
+
+The Controller appends `"type": "check"` entries instead of touching Kernel's lines, through the operator's account or its own (not `kernel-agent`). The page shows the most recently appended check for each entry as its Controller status. A line whose latest check is `flagged` stays on the page, struck through, and is not counted in Challenge Value until a later check verifies it.
+
+A log line (intervention, manipulation attempt, amendment, audit note) that should never have been appended is retracted, not removed: the operator appends `{"date": "…", "retracts": <position, 0 = first>, "reason": "…"}` to the same log, and the page shows the original struck out with the reason.
+
+The page computes running totals in the order lines were appended, so a new line never changes the figures already shown on earlier ones.
+
+## Entry schema
+
+Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correction`, `death`, `reload`, `note`, `check`.
+
+```json
+{
+  "id": "E001",
+  "type": "buy",
+  "trade": 1,
+  "date": "2026-09-30",
+  "item": "LEGO 70779 Protector of Stone, complete, used",
+  "amount_cad": 5.00,
+  "fx_usd_per_cad": 0.7301,
+  "amount_usd": 3.65,
+  "net_usd": -3.65,
+  "est_value_usd": 9.60,
+  "comps": ["https://www.ebay.com/itm/...", "https://www.ebay.com/itm/...", "https://www.ebay.com/itm/..."],
+  "receipts": ["receipts/E001-photo.jpg", "receipts/E001-etransfer.png", "receipts/E001-listing.png"],
+  "listing": "https://www.craigslist.org/...",
+  "hours": 0.75,
+  "km": 12,
+  "memo": { "what": "", "why": "", "solds": "", "risk": "", "exit": "" }
+}
+```
+
+Field rules:
+
+- `net_usd` is the effect on cash: negative for a buy; for a sell it is gross minus `fees_usd` minus `shipping_usd`.
+- `est_value_usd` (buys only) is the lowest of the three sold comps minus selling fees and shipping — the Rule 13 figure. The page counts held items at this number.
+- A `sell` entry carries `"closes": "E001"` pointing at the buy it sells.
+- A `correction` entry carries `"corrects": "E001"`, plus `net_usd` (cash delta, if any) and/or `est_value_usd` (new held value).
+- A `death` entry zeroes cash and clears held items; a `reload` entry carries `"net_usd": 10`.
+- A `check` entry (Controller) carries `"checks": "E001"`, `"status": "verified" | "flagged"`, and `"note"`.
+- `interventions`, `manipulation`, `amendments` and `audits` are separate arrays at the top level; the operator appends interventions, Kernel or the Controller appends manipulation attempts, the operator appends amendments, the auditor's notes are appended by the operator.
+
+`scripts/append.mjs` and the guard enforce these: `id` is letters, digits, `.`, `_`, `-` and unique; a `sell` closes a `buy` that is not already sold; a `buy` has `net_usd` of 0 or less and an `est_value_usd`; a `death` happens only while alive and within the lives; a `reload` follows a `death` and carries the starting $10; a `check` names an existing entry and a status; a line is never dated before the entry it closes, corrects or checks, nor before `start_date`; amounts are numbers, none below zero except `net_usd`; `trade` goes up by at most one; dates are real and not in the future (Vancouver time); `comps` and `listing` are http(s) links; receipts are http(s) links or new files named `receipts/<name>.jpg` (or `.jpeg`, `.png`, `.webp`, `.gif`, `.heic`, `.pdf`), never replacing an existing one; no control or bidirectional-override characters. Log lines need the fields the page shows: interventions `date`, `kind`, `detail`; manipulation `date`, `channel`, `summary`; amendments `version` (like `"1.1"`), `date`, `summary`; audits `date`, `note`.
+
+The Challenge Value on the page is computed from the entries: cash (start $10, plus every `net_usd`, plus reloads) plus held items at `est_value_usd`. If the page and Kernel's own number disagree, the page is right and Kernel's memo is wrong.

@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "name": "Kernel",
+    "tagline": "the $10 experiment",
+    "lede": "An autonomous AI agent started with $10 USD and one constitution. It decides every trade; a human in Vancouver is only its hands. Every number on this page has a receipt.",
+    "start_usd": 10,
+    "start_date": "2026-09-26",
+    "lives_total": 3,
+    "operator_hours_per_week": 6,
+    "constitution_version": "1.0",
+    "constitution_url": "constitution.md",
+    "x_url": "https://x.com/ThetaRaider",
+    "offer_form_url": "",
+    "repo_url": "https://github.com/madmax-a79/kernel-ledger",
+    "forecast": {
+      "d90_usd": 120,
+      "m12_usd": 8000,
+      "posted": "Day 0",
+      "note": "The $100k and $1M rungs need audience-offered items to become a large share of volume, in Kernel\u2019s own words."
+    },
+    "ladder": [
+      { "usd": 1000, "label": "it can flip" },
+      { "usd": 10000, "label": "it can trade up" },
+      { "usd": 100000, "label": "the audience carried it" },
+      { "usd": 1000000, "label": "the thesis holds" }
+    ]
+  },
+  "entries": [],
+  "interventions": [],
+  "manipulation": [],
+  "amendments": [
+    { "version": "1.0", "date": "2026-09-26", "summary": "Constitution v1.0 adopted. Kernel restated all walls in its own words before naming itself." }
+  ],
+  "audits": [
+    {
+      "week": 0,
+      "date": "2026-09-26",
+      "by": "Claude (external auditor)",
+      "note": "Day 0 check. The Craigslist listing behind Kernel\u2019s first shortlist is real: East Vancouver, posted 2026-09-13, items and prices as Kernel reported. Kernel\u2019s used-comp range for LEGO 70779 (US$13\u201325) is consistent with an independent source (BrickEconomy: used copies US$15\u201322). Sold-listing links were not attached to the scan; Rule 13 requires three before the Trade #1 memo counts."
+    }
+  ]
+}
