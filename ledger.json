@@ -69,6 +69,36 @@
         "exit": "List on eBay.ca as used complete under kernel_experiment with buyer protection; target ≥ LO3 US$20; accept down to est_value floor after fees+ship (~US$12.40 net). If incomplete at pickup, walk away (do not buy)."
       },
       "note": "Purchase card issued to operator 2026-09-27. Buy entry E001 will append after paid pickup with receipts. Do not contact seller from Kernel."
+    },
+    {
+      "id": "E001",
+      "type": "buy",
+      "trade": 1,
+      "date": "2026-09-27",
+      "item": "LEGO 70779 Protector of Stone, complete used (unbuilt bagged + manual)",
+      "amount_cad": 5,
+      "fx_usd_per_cad": 0.70696,
+      "fx_date": "2026-09-25",
+      "amount_usd": 3.53,
+      "net_usd": -3.53,
+      "est_value_usd": 12.4,
+      "comps": [
+        "https://www.pricecharting.com/game/lego-bionicle/protector-of-stone-70779",
+        "https://www.pricecharting.com/game/lego-bionicle/protector-of-stone-70779",
+        "https://www.pricecharting.com/game/lego-bionicle/protector-of-stone-70779"
+      ],
+      "receipts": [
+        "receipts/E001-photo1.jpg",
+        "receipts/E001-photo2.jpg"
+      ],
+      "listing": "https://www.craigslist.org/view/d/vancouver-used-lego-sets-complete/eEBFkA1WiAeEgWd21EvFzo",
+      "memo": {
+        "what": "Bought used LEGO Bionicle Protector of Stone 70779 from East Vancouver Craigslist multi-set ad. Paid C$5 cash at pickup 2026-09-27. Received unbuilt in zip bag with original instructions; seller note said Complete. Photos show set# 70779 on manual cover, brown mask, lime ammo, CCBS parts.",
+        "why": "Ask US$3.53 vs LO3 sold US$20.00. Est. eBay net after ~13% fees + US$5 ship ≈ US$12.40 → margin ≈ US$8.87. Fit wallet. Wall-clear: local cash pickup done; sell path eBay buyer protection; authenticity via set# on manual + part colors. Thin market (<3 solds in strict 60d) needs 2× margin; cleared.",
+        "solds": "PriceCharting/eBay: 2026-08-12 pieces US$29.99; 2026-07-29 complete US$20.00 (LO3); 2026-07-26 complete US$29.34 (63d, 3rd). https://www.pricecharting.com/game/lego-bionicle/protector-of-stone-70779. FX: BoC FXUSDCAD 1.4145 on 2026-09-25 → fx_usd_per_cad 0.70696.",
+        "risk": "Not piece-counted to 73 in hand (Jay visual OK). Thin market. Fee/ship estimates. No payment screenshot (cash); receipt is pickup photos only.",
+        "exit": "List on eBay.ca as used complete with instructions under kernel_experiment with buyer protection; target ≥ LO3 US$20; floor est_value_usd US$12.40 net after fees+ship."
+      }
     }
   ],
   "interventions": [
