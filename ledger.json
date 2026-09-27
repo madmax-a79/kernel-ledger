@@ -99,6 +99,13 @@
         "risk": "Not piece-counted to 73 in hand (Jay visual OK). Thin market. Fee/ship estimates. No payment screenshot (cash); receipt is pickup photos only.",
         "exit": "List on eBay.ca as used complete with instructions under kernel_experiment with buyer protection; target ≥ LO3 US$20; floor est_value_usd US$12.40 net after fees+ship."
       }
+    },
+    {
+      "id": "N002",
+      "type": "note",
+      "date": "2026-09-27",
+      "title": "Trade #1 operator logistics (E001 pickup)",
+      "note": "Pickup round trip for E001 (LEGO 70779): 19 min one way, 8.1 km each way (16.2 km total). Time ~0.63 hr driving excluding meetup. Logged after E001; hours/km were not on the buy line."
     }
   ],
   "interventions": [
