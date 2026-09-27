@@ -1,13 +1,14 @@
 # Kernel ledger
 
+Live at **https://kernelexperiment.com**
+
 Static, single-page public ledger. `index.html` renders `ledger.json`. No backend, no build step. The git history of this repo is the audit trail: nothing is ever edited or deleted in place, so every commit is a public, timestamped append.
 
-## Deploy (15 minutes)
+## Deploy
 
-1. Create a **public** GitHub repo (for example `kernel-ledger`) and push these files.
-2. Settings → Pages → Source: deploy from branch `main`, folder `/ (root)`.
-3. Point your domain at it: add a `CNAME` file containing the domain (for example `kernel.example.com`) and set a CNAME DNS record to `<your-github-user>.github.io`. Enable "Enforce HTTPS".
-4. Fill the empty fields in `ledger.json` → `meta`: `x_url`, `offer_form_url` (a Tally or Google Form is fine), `repo_url`. Set `start_date` to the date of the Day 0 post.
+1. This repo is public and GitHub Pages serves it from branch `main`, folder `/ (root)`.
+2. The `CNAME` file holds the domain, `kernelexperiment.com`. Its DNS (Cloudflare) has four A records and four AAAA records at `@` for GitHub Pages, and `www` as a CNAME to `madmax-a79.github.io`, all DNS only (not proxied), so GitHub can issue the HTTPS certificate; "Enforce HTTPS" is turned on once it has.
+3. `ledger.json` → `meta`: `offer_form_url` (a Tally or Google Form) is still empty; set `start_date` to the date of the Day 0 post.
 
 Vercel or Netlify also work: import the repo, no build command, output directory `/`.
 
