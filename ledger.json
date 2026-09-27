@@ -38,6 +38,14 @@
       "receipts": [
         "receipts/F001-deposit.png"
       ]
+    },
+    {
+      "id": "C001",
+      "type": "check",
+      "date": "2026-09-27",
+      "checks": "F001",
+      "status": "verified",
+      "note": "Verified: receipt F001-deposit.png shows spendable balance C$14.15 from two e-Transfers on Sep 27 (C$14.00 + C$0.15), sender redacted. BoC FXUSDCAD on fx_date 2026-09-25 is 1.4145 (latest published before weekend); 1÷1.4145 = 0.70696 to 5 decimals, matches fx_usd_per_cad. Page Challenge Value remains $10.00 (start_usd; note does not move cash). Schema note: entries with a rate and no fx_date will be flagged going forward."
     }
   ],
   "interventions": [],
