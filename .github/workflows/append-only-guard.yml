@@ -6,12 +6,13 @@ name: append-only guard
 # scripts/append.mjs). Every commit since the last one a finished run of this guard checked is
 # covered, so pushes whose run was skipped or cancelled are caught by the next run or the daily one.
 #
-# Pushes by APPEND_ONLY_ACTORS (Kernel), as recorded in GitHub's push log, are held to more: they
-# may only append entries that are not Controller checks and manipulation attempts, and add new
-# receipt photos or PDFs; they may not touch meta or any other file.
+# Pushes by the bot accounts, as recorded in GitHub's push log, are held to more. KERNEL_ACTORS
+# (Kernel) may append entries of any type except Controller checks; CONTROLLER_ACTORS (the
+# Controller) may append only Controller checks; both may append manipulation attempts and add new
+# receipt photos or PDFs, and neither may touch meta or any other file.
 #
 # The check is inline, not a script in the repo: GitHub refuses pushes that touch
-# .github/workflows/ from a token without the "workflow" scope, so Kernel cannot weaken it.
+# .github/workflows/ from a token without the "workflow" scope, so neither bot can weaken it.
 # It reports after a push; main is also protected against force pushes and deletion.
 
 on:
@@ -45,7 +46,8 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           GH_TOKEN: ${{ github.token }}
-          APPEND_ONLY_ACTORS: kernel-agent
+          KERNEL_ACTORS: kernel-agent
+          CONTROLLER_ACTORS: kernel-controller
         run: |
           node --input-type=module <<'JS'
           import { execFileSync } from 'node:child_process';
@@ -269,8 +271,12 @@ jobs:
           const revList = (range) => out('rev-list', '--reverse', '--topo-order', range).split('\n').filter(Boolean);
           // Ledger text is shown as inert code, never as Markdown or links.
           const label = (o) => '`' + String(o?.id ?? o?.version ?? (o?.week != null ? 'week ' + o.week : o?.date ?? '?')).replace(/[`\r\n]/g, '').slice(0, 40) + '`';
-          const actors = (env.APPEND_ONLY_ACTORS || '').split(/[\s,]+/).filter(Boolean).map((a) => a.toLowerCase());
-          const appendOnly = (who) => !!who && actors.includes(who.toLowerCase());
+          // Bot accounts and the only lines each may append: Kernel its own entries (never Controller checks),
+          // the Controller only its checks; both may log manipulation attempts.
+          const list = (v) => (v || '').split(/[\s,]+/).filter(Boolean).map((a) => a.toLowerCase());
+          const ROLES = { kernel: list(env.KERNEL_ACTORS), controller: list(env.CONTROLLER_ACTORS) };
+          const roleOf = (who) => Object.keys(ROLES).find((r) => !!who && ROLES[r].includes(who.toLowerCase())) || null;
+          const appendOnly = (who) => roleOf(who) !== null;
 
           // ledger.json at a commit: { missing } | { error } | { data, error? }. A ledger that parses but
           // breaks a rule keeps its data, so what later commits do to it is still checked.
@@ -322,8 +328,8 @@ jobs:
           }
 
           // Each appended line must follow the ledger rules, checked against the ledger as it stood
-          // before it, and name only receipt files that are in the commit; Kernel may append only its
-          // own kinds of line.
+          // before it, and name only receipt files that are in the commit; each bot account may append
+          // only its own kinds of line.
           function checkAppended(before, after, c, who) {
             const soFar = { ...after };
             for (const k of ARRAYS) soFar[k] = before[k].slice();
@@ -338,9 +344,11 @@ jobs:
                     if (!/^100644 blob /.test(out('ls-tree', c, '--', r))) flag(c, `${short(c)}: ${label(o)} names receipt ${JSON.stringify(r)}, which is not a file in this commit`);
                   }
                 }
-                if (appendOnly(who)) {
+                const role = roleOf(who);
+                if (role) {
                   if (!['entries', 'manipulation'].includes(k)) flag(c, `${short(c)}: ${who} may not append to ${k}`);
-                  else if (isObject(o) && o.type === 'check') flag(c, `${short(c)}: ${who} may not append Controller checks (${label(o)})`);
+                  else if (k === 'entries' && isObject(o) && role === 'kernel' && o.type === 'check') flag(c, `${short(c)}: ${who} may not append Controller checks (${label(o)})`);
+                  else if (k === 'entries' && isObject(o) && role === 'controller' && o.type !== 'check') flag(c, `${short(c)}: ${who} may append only Controller checks, not a ${JSON.stringify(String(o.type))} line (${label(o)})`);
                   if (isObject(o) && o.retracts != null) flag(c, `${short(c)}: ${who} may not retract lines`);
                 }
                 soFar[k].push(o);
@@ -348,7 +356,7 @@ jobs:
             }
           }
 
-          // What an append-only account may change in one commit: append to ledger.json, add new receipt files.
+          // What a bot account may change in one commit: append to ledger.json, add new receipt files.
           function checkFiles(c, parents, cur, who) {
             if (cur.data) {
               for (const p of parents) {

@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // Append one line to a top-level array of ledger.json, commit it and push.
 //
-//   node scripts/append.mjs <array> <file.json> [--dry-run] [--operator]
+//   node scripts/append.mjs <array> <file.json> [--dry-run] [--operator | --controller]
 //
 //   <array>      entries | interventions | manipulation | amendments | audits
 //   <file.json>  a UTF-8 file holding exactly one JSON object
 //   --dry-run    check it against the latest main and print what would be committed; change nothing
-//   --operator   needed for the operator's and Controller's lines: interventions, amendments,
-//                audits, Controller checks and retractions. Kernel never passes it.
+//   --operator   needed for the operator's lines: interventions, amendments, audits and
+//                retractions (it also allows Controller checks). Kernel never passes it.
+//   --controller needed for Controller checks; the Controller (kernel-controller) passes it.
 //
 // Existing lines are never touched: the object is inserted as text just before the array's
 // closing bracket, so the commit diff shows only the new line. New receipt files named in
@@ -352,16 +353,19 @@ function main(argv) {
   const flags = new Set(argv.filter((a) => a.startsWith('--')));
   const args = argv.filter((a) => !a.startsWith('--'));
   const [array, input] = args;
-  if (args.length !== 2 || !ARRAYS.includes(array) || [...flags].some((f) => !['--dry-run', '--operator'].includes(f))) {
-    fail(`usage: node scripts/append.mjs <${ARRAYS.join('|')}> <file.json> [--dry-run] [--operator]`);
+  if (args.length !== 2 || !ARRAYS.includes(array) || [...flags].some((f) => !['--dry-run', '--operator', '--controller'].includes(f))) {
+    fail(`usage: node scripts/append.mjs <${ARRAYS.join('|')}> <file.json> [--dry-run] [--operator | --controller]`);
   }
 
   let obj;
   try { obj = JSON.parse(decode(readFileSync(path.resolve(input)), input).replace(/^\uFEFF/, '')); }
   catch (e) { if (e instanceof Stop) throw e; fail(`cannot read ${input}: ${e.message}`); }
   if (!isObject(obj)) fail(`${input} must hold one JSON object`);
-  if (!flags.has('--operator') && (OPERATOR_ONLY.includes(array) || obj.type === 'check' || obj.retracts != null)) {
-    fail(`${obj.retracts != null ? 'retractions' : obj.type === 'check' ? 'Controller checks' : array} are appended by the operator, not Kernel (the operator adds --operator)`);
+  if (!flags.has('--operator') && (OPERATOR_ONLY.includes(array) || obj.retracts != null)) {
+    fail(`${obj.retracts != null ? 'retractions' : array} are appended by the operator, not Kernel or the Controller (the operator adds --operator)`);
+  }
+  if (array === 'entries' && obj.type === 'check' && !flags.has('--controller') && !flags.has('--operator')) {
+    fail('Controller checks are appended by the Controller, not Kernel (the Controller adds --controller)');
   }
 
   try { root = path.resolve(execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()); }
