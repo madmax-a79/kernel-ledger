@@ -86,6 +86,11 @@
       "version": "1.1",
       "date": "2026-09-27",
       "summary": "Operator holds the challenge wallet and executes every payment; receipts are redacted; operator surname never appears; known limitation on shared credentials."
+    },
+    {
+      "version": "1.2",
+      "date": "2026-09-27",
+      "summary": "Kernel may message counterparties directly within limits; the operator sets meeting times and places; messages sent by the operator are written in his own voice."
     }
   ],
   "audits": [
