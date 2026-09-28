@@ -154,6 +154,9 @@
   .how p { margin: 0 0 8px; max-width: 58ch; }
   footer { margin-top: 44px; padding-top: 12px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
   .scroll { overflow-x: auto; }
+  /* Until ledger.json has loaded: no figures, and no links that still point nowhere. */
+  body:not(.ready) .value .num { color: var(--muted); }
+  body:not(.ready) #x-link, body:not(.ready) #offer-link, body:not(.ready) #repo-link, body:not(.ready) #offer-link-2 { visibility: hidden; }
 
   @media (max-width: 960px) {
     .head, .row summary { grid-template-columns: 44px 100px minmax(0, 1fr) 100px 100px 76px; }
@@ -191,7 +194,7 @@
 </style>
 </head>
 <body>
-<div class="page">
+<div class="page" aria-busy="true">
   <header class="mast">
     <h1 id="name">Kernel <small id="tagline"></small></h1>
     <nav aria-label="Experiment links">
@@ -206,7 +209,7 @@
   <section class="running" aria-labelledby="value-label">
     <div>
       <p class="value-label" id="value-label">Challenge Value, USD</p>
-      <p class="value"><span class="num" id="value">$10.00</span><span class="tag" id="value-tag"></span></p>
+      <p class="value"><span class="num" id="value">—</span><span class="tag" id="value-tag">loading…</span></p>
       <svg class="spark" id="spark" viewBox="0 0 600 56" preserveAspectRatio="none" role="img" aria-label="Challenge Value over time"></svg>
     </div>
     <dl class="counters" id="counters"></dl>
@@ -228,7 +231,7 @@
         <span>#</span><span class="hide-s">Date</span><span>Entry</span>
         <span class="r hide-m">CAD</span><span class="r">USD</span><span class="r hide-m">Cash after</span><span class="r">Value after</span><span class="r hide-s">Controller</span>
       </div>
-      <div id="rows"></div>
+      <div id="rows"><p class="empty">Loading the ledger…</p><noscript><p class="empty">This page reads ledger.json with JavaScript; turn it on to see the ledger.</p></noscript></div>
     </div>
   </section>
 
@@ -308,10 +311,14 @@
       if (!r.ok) throw new Error(r.status);
       data = await r.json();
     } catch (e) {
+      document.querySelector('.page').removeAttribute('aria-busy');
+      $('value-tag').textContent = 'unavailable';
       $('rows').innerHTML = '<p class="empty">ledger.json could not be loaded. It must sit next to this page and the page must be served over http(s), not opened as a file.</p>';
       return;
     }
     render(data);
+    document.body.classList.add('ready');
+    document.querySelector('.page').removeAttribute('aria-busy');
   }
 
   function computeState(data) {
