@@ -231,6 +231,14 @@
       "title": "Corrects C005–C007: piece count 67; pickup hours 0.75",
       "hours": 0.75,
       "note": "Closes open Controller flags C005 (N001 said 73 pieces), C006 (E001 memo said 73), C007 (N002 lacked numeric hours). Fact: Trade #1 LEGO 70779 is complete at 67 pieces per the original instruction manual (operator count; N004). Pickup whole-trip hours are 0.75 (N003). No cash or held-value change."
+    },
+    {
+      "id": "C012",
+      "type": "check",
+      "date": "2026-09-28",
+      "checks": "E001c",
+      "status": "verified",
+      "note": "Verified E001c held value US$9.96 under Constitution v1.3 Amendment 3 Rule 13. Live eBay.it listing re-fetch blocked (HTTP 403 / error page from box); rates taken from ledger operator facts already on E001b/C011 (eBay labels C$10.52 CA / C$8.04 US on https://www.ebay.ca/itm/178534671011). Independent math: LO3 US$20 × (1−0.13) = 17.40; CA ship 10.52×fx 0.70696 = US$7.44; US ship 8.04×0.70696 = US$5.68; several destinations → highest rate = CA US$7.44. PriceCharting LO3 source shows a single Price ($20.00) with no shipping breakout (C011), so Rule 13 deducts shipping in full (not only FVF on ship). Held = 17.40 − 7.44 = US$9.96, matching E001c.est_value_usd. E001c correctly supersedes E001b’s fee-on-ship-only formula that C011 flagged. Open unanswered flags unchanged: C005 (N001 memo 73), C006 (E001 memo 73), C007 (N002 missing numeric hours) — no Kernel correction/note answering them since those checks."
     }
   ],
   "interventions": [
