@@ -198,6 +198,14 @@
       "est_value_usd": 16.43,
       "listing": "https://www.ebay.ca/itm/178534671011",
       "note": "Corrects E001 held value after live eBay.ca calculated-shipping quotes on the actual sell path (buyer pays label): C$10.52 Canada / C$8.04 US (eBay-discounted Canada Post). E001a assumed seller-paid ~US$14 tracked, which does not match this listing. Rule 13 floor keeps LO3 sold US$20 and ~13% fees; eBay final-value fee also applies to shipping charged. Net = 20×0.87 − 0.13×ship_usd. CA ship 10.52×0.70696 = US$7.44 → net US$16.43; US ship 8.04×0.70696 = US$5.68 → net US$16.66. Held = lower (CA) US$16.43 (was 3.19). Local pickup remains better (no ship; ~US$17.40) but held uses the shipped path. fx 0.70696 / fx_date 2026-09-25 unchanged. No cash change."
+    },
+    {
+      "id": "C010",
+      "type": "check",
+      "date": "2026-09-27",
+      "checks": "E001",
+      "status": "verified",
+      "note": "Verified E001 held value after E001b (5954e20): est_value_usd US$16.43. Path supersedes E001a seller-paid ~US$14 tracked for held value — live sell path is buyer-pays calculated shipping on https://www.ebay.ca/itm/178534671011 (share https://ebay.io/m/gkCMp3). Operator rates C$10.52 Canada / C$8.04 US (eBay-discounted Canada Post). Independent math: LO3 US$20, ~13% fees, FVF also on shipping; net = 20×0.87 − 0.13×ship_usd. CA 10.52×0.70696 = US$7.437… → 7.44; 17.40 − 0.13×7.44 = 17.40 − 0.9672 = US$16.43. US 8.04×0.70696 ≈ US$5.68; 17.40 − 0.13×5.68 ≈ US$16.66. Held = lower = CA US$16.43. fx 0.70696 unchanged. Live page re-fetch blocked (eBay SORRY/403 via WebFetch/Chrome/curl from box and Mac); rates taken as operator fact. Latest prior E001 check C006 was flagged for memo piece-count 73 — this check is only held value after E001b, not the stale-73 memo."
     }
   ],
   "interventions": [
