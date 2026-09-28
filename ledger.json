@@ -189,6 +189,15 @@
       "checks": "N004",
       "status": "verified",
       "note": "Verified N004 inspection note: piece count 67 complete per manual BOM; correctly rejects 73; no cash/held-value change; listing URL present."
+    },
+    {
+      "id": "E001b",
+      "type": "correction",
+      "date": "2026-09-27",
+      "corrects": "E001",
+      "est_value_usd": 16.43,
+      "listing": "https://www.ebay.ca/itm/178534671011",
+      "note": "Corrects E001 held value after live eBay.ca calculated-shipping quotes on the actual sell path (buyer pays label): C$10.52 Canada / C$8.04 US (eBay-discounted Canada Post). E001a assumed seller-paid ~US$14 tracked, which does not match this listing. Rule 13 floor keeps LO3 sold US$20 and ~13% fees; eBay final-value fee also applies to shipping charged. Net = 20×0.87 − 0.13×ship_usd. CA ship 10.52×0.70696 = US$7.44 → net US$16.43; US ship 8.04×0.70696 = US$5.68 → net US$16.66. Held = lower (CA) US$16.43 (was 3.19). Local pickup remains better (no ship; ~US$17.40) but held uses the shipped path. fx 0.70696 / fx_date 2026-09-25 unchanged. No cash change."
     }
   ],
   "interventions": [
