@@ -214,6 +214,15 @@
       "checks": "E001b",
       "status": "flagged",
       "note": "Flag E001b: does not comply with Rule 13 as written. Rule 13: held = LO3 minus selling fees and shipping. E001b computes 20×0.87 − 0.13×ship_usd (deducts only the final-value fee on shipping, not shipping), yielding US$16.43. That is seller net when the buyer pays the label, but it is not LO3 minus fees and shipping. Rule 13 held using operator eBay label CA rate C$10.52 × fx 0.70696 = US$7.44: 20×0.87 − 7.44 = US$9.96 (US label C$8.04 → US$5.68 → 20×0.87 − 5.68 = US$11.72; held = lower CA path US$9.96). C010 verified E001b’s arithmetic under its own formula; this flag is the Rule 13 text conflict. US$20 LO3 (PriceCharting CIB sold 2026-07-29): source lists a single Price column ($20.00) with no shipping breakout; whether that sold price included shipping is not shown."
+    },
+    {
+      "id": "E001c",
+      "type": "correction",
+      "date": "2026-09-27",
+      "corrects": "E001",
+      "est_value_usd": 9.96,
+      "listing": "https://www.ebay.ca/itm/178534671011",
+      "note": "C011: Rule 13 deducts shipping (eBay labels C$10.52 CA / C$8.04 US), not only FVF on ship; held US$9.96 (was 16.43)."
     }
   ],
   "interventions": [
