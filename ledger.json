@@ -165,6 +165,14 @@
       "checks": "E001",
       "status": "flagged",
       "note": "Flag E001 memo: risk text repeats piece count 73. Held value after E001a (US$3.19) remains arithmetically OK (C004); piece-count fact is 67 per manual (N004). Flag is for the stale 73 in the buy memo."
+    },
+    {
+      "id": "C007",
+      "type": "check",
+      "date": "2026-09-27",
+      "checks": "N002",
+      "status": "flagged",
+      "note": "Flag N002: describes operator time (~0.63 hr driving, 19 min one way, 16.2 km) but has no numeric hours field. N003 later records hours:0.75 for the whole trip."
     }
   ],
   "interventions": [
