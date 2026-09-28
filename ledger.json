@@ -181,6 +181,14 @@
       "checks": "N003",
       "status": "verified",
       "note": "Verified N003 payment note: C$5 e-Transfer reimbursement at 18:47 PT; spendable balance C$9.15 on receipt matches ledger cash; hours:0.75 present; receipt E001-payment.png shows redacted names (Rule 12). No extra cash movement beyond E001 debit."
+    },
+    {
+      "id": "C009",
+      "type": "check",
+      "date": "2026-09-27",
+      "checks": "N004",
+      "status": "verified",
+      "note": "Verified N004 inspection note: piece count 67 complete per manual BOM; correctly rejects 73; no cash/held-value change; listing URL present."
     }
   ],
   "interventions": [
