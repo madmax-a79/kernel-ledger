@@ -62,6 +62,44 @@ Selling a lot in parts: record each piece as its own buy, or, after selling part
 
 The term 'BrickLink' is a trademark of the LEGO Group BrickLink. This application uses the BrickLink API but is not endorsed or certified by LEGO BrickLink, Inc.
 
+## eBay listings (Kernel) and the daily audit (Controller)
+
+`scripts/ebay.mjs` lists, reprices and ends Kernel's eBay listings and reads its orders through eBay's Sell APIs, with a token that carries only two scopes: `sell.inventory` and `sell.fulfillment.readonly`.
+
+```bash
+node scripts/ebay.mjs list   --sku E004 --title "…" --price 24.99 --condition USED_GOOD --category 19006 \
+                             --images https://kernelexperiment.com/receipts/E004-photo.jpg --description "…" [--aspect "Brand=LEGO"]
+node scripts/ebay.mjs revise --sku E004 --price 19.99
+node scripts/ebay.mjs end    --sku E004
+node scripts/ebay.mjs orders [--since 2026-09-27]
+node scripts/ebay.mjs log    --from 41 --hash <the head from the last review>    # the Controller, daily
+node scripts/ebay.mjs audit                                                    # the Controller, daily
+```
+
+Limits:
+
+- The SKU is the buy's ledger id. Only a buy the published ledger (main on GitHub) still holds can be listed: one unit, fixed price, no Best Offer.
+- Nothing is listed or repriced below the buy's floor: its `est_value_usd`, as last re-marked by a correction the Controller hasn't flagged. For a CAD listing, the floor is converted at the Bank of Canada's latest rate. To price lower, Kernel first appends a correction that re-marks the buy.
+- `revise` changes only the price. `end` needs the SKU. Nothing ends or deletes listings in bulk.
+- Every eBay call, and every refusal, is appended to the call log `EBAY_CALL_LOG`. Each line carries the hash of the line before it, so an edited line shows. If the log can't be written, nothing is sent to eBay.
+- Buyer data is never written anywhere. Orders are cut down in memory to SKUs, amounts and statuses before anything is printed. The log records only how many orders came back and their SKUs.
+
+These limits cover calls made through the script. The token itself can do anything its two scopes allow, so the Controller checks eBay's own records every day:
+
+- `log --from <n> --hash <h>` checks the chain from the head recorded at the last review and prints the new lines. Record the new head (`n` and `h`) in the day's check.
+- `audit` lists every offer on the account and flags any listing that is below its floor, that the ledger doesn't hold, that isn't fixed-price and single-unit, that has Best Offer on, or that is missing from the call log or priced differently from it.
+
+eBay's API License Agreement limits storing and redistributing what its APIs return, so the output is never committed. The ledger's receipts are screenshots of the listing and the order, with buyer details redacted (Rule 12).
+
+Environment, from the bots' secret store:
+
+- `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REFRESH_TOKEN`
+- `EBAY_MARKETPLACE`: `EBAY_CA` or `EBAY_US`
+- `EBAY_PAYMENT_POLICY_ID`, `EBAY_RETURN_POLICY_ID`, `EBAY_FULFILLMENT_POLICY_ID`, `EBAY_LOCATION_KEY`
+- `EBAY_CALL_LOG`: one path outside both clones that both bots can append to
+
+The operator's one-time setup uses `consent-url`, `exchange --code …` (prints the refresh token; nothing is saved) and `location`. These also need `EBAY_RUNAME`. The script needs Node.js 20 or later and no packages.
+
 ## Entry schema
 
 Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correction`, `death`, `reload`, `note`, `check`.
