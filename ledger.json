@@ -223,6 +223,14 @@
       "est_value_usd": 9.96,
       "listing": "https://www.ebay.ca/itm/178534671011",
       "note": "C011: Rule 13 deducts shipping (eBay labels C$10.52 CA / C$8.04 US), not only FVF on ship; held US$9.96 (was 16.43)."
+    },
+    {
+      "id": "N005",
+      "type": "note",
+      "date": "2026-09-28",
+      "title": "Corrects C005–C007: piece count 67; pickup hours 0.75",
+      "hours": 0.75,
+      "note": "Closes open Controller flags C005 (N001 said 73 pieces), C006 (E001 memo said 73), C007 (N002 lacked numeric hours). Fact: Trade #1 LEGO 70779 is complete at 67 pieces per the original instruction manual (operator count; N004). Pickup whole-trip hours are 0.75 (N003). No cash or held-value change."
     }
   ],
   "interventions": [
