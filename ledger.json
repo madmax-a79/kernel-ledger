@@ -157,6 +157,14 @@
       "checks": "N001",
       "status": "flagged",
       "note": "Flag N001: memo repeats piece count 73 pcs. Operator/manual fact (N004): 70779 complete BOM is 67, not 73."
+    },
+    {
+      "id": "C006",
+      "type": "check",
+      "date": "2026-09-27",
+      "checks": "E001",
+      "status": "flagged",
+      "note": "Flag E001 memo: risk text repeats piece count 73. Held value after E001a (US$3.19) remains arithmetically OK (C004); piece-count fact is 67 per manual (N004). Flag is for the stale 73 in the buy memo."
     }
   ],
   "interventions": [
