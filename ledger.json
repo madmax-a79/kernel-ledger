@@ -122,6 +122,17 @@
       "corrects": "E001",
       "est_value_usd": 3.19,
       "note": "Corrects E001 held value: Canada Post consumer rates (~US$14 tracked) replace assumed US$5 ship; LO3 US$20 − ~13% fees − ~US$14 ship = US$3.19 (was US$12.40; C003)."
+    },
+    {
+      "id": "N003",
+      "type": "note",
+      "date": "2026-09-27",
+      "title": "E001 payment receipt + operator hours",
+      "hours": 0.75,
+      "note": "Payment record for E001 (LEGO 70779): seller paid C$5 in personal cash at pickup; Jay reimbursed himself from the challenge wallet by e-Transfer at 18:47 PT 2026-09-27. Wallet balance after transfer C$9.15, matching ledger cash (E001 already debited the C$5; this note adds no cash change). Whole pickup trip ~0.75 h (updates N002 driving-only ~0.63 h). Receipt: receipts/E001-payment.png (names redacted in attachment view).",
+      "receipts": [
+        "receipts/E001-payment.png"
+      ]
     }
   ],
   "interventions": [
