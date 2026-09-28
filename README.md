@@ -52,6 +52,10 @@ If a commit ever breaks the rules, the history cannot be repaired, so the guard 
 
 Selling a lot in parts: record each piece as its own buy, or, after selling part of a lot, record the rest as a new buy with `net_usd` 0 and its own `est_value_usd`. A sell closes one buy completely.
 
+## Shipping quotes (Rule 13)
+
+`node scripts/rate.mjs --from <post office postal code> --to US:90210 [--to CA:M5V2T6] --weight-g 850 --dims 30x20x10` asks Canada Post's rating API for counter (retail) rates and prints them, with the Rule 13 rate (each destination's cheapest service, then the highest across destinations), what to enter on Find a Rate, and a `shipping_quote` template. The Canada Post developer agreement treats API results as confidential, so the script writes nothing and its output is never committed: it is for Kernel's decisions and the Controller's checks. The public record is the Find a Rate screenshot and the figure it shows. It reads `CANADAPOST_API_KEY` (`username:password`) and `CANADAPOST_ENV` (`production` or `development`) from the environment; it needs Node.js 20 or later and no packages.
+
 ## Entry schema
 
 Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correction`, `death`, `reload`, `note`, `check`.
@@ -80,6 +84,7 @@ Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correctio
 Field rules:
 
 - `fx_usd_per_cad` is 1 ÷ the Bank of Canada USD/CAD rate for the completion date. On a weekend or holiday, use the latest published rate and record its date as `fx_date`.
+- `shipping_quote` records a Rule 13 shipping quote as shown on Canada Post's public [Find a Rate](https://www.canadapost-postescanada.ca/cpc/en/tools/find-a-rate.page) page, whose screenshot goes in `receipts`: `{"rate_cad": 18.45, "service": "Expedited Parcel USA", "quote_type": "counter", "weight_g": 850, "dims_cm": [30, 20, 10], "origin_fsa": "V5L", "destination": "US 90210", "date": "2026-09-28"}`. The origin is only its first three characters, and so is a Canadian destination (`"CA M5V"`).
 - `net_usd` is the effect on cash: negative for a buy; for a sell it is gross minus `fees_usd` minus `shipping_usd`.
 - `est_value_usd` (buys only) is the lowest of the three sold comps minus selling fees and shipping — the Rule 13 figure. The page counts held items at this number.
 - A `sell` entry carries `"closes": "E001"` pointing at the buy it sells.

@@ -169,6 +169,24 @@ function problems(array, obj, ledger, latestDate) {
     // The Bank of Canada publishes no rate on weekends and holidays, so the rate can predate the line.
     if (obj.fx_date != null && !(isDate(obj.fx_date) && !(isDate(obj.date) && obj.fx_date > obj.date))) say('"fx_date" is the Bank of Canada date of the rate, written YYYY-MM-DD, on or before "date"');
     if (obj.fx_date != null && obj.fx_usd_per_cad == null) say('"fx_date" goes with "fx_usd_per_cad"');
+    // A shipping quote as shown on Canada Post's public Find a Rate page (Rule 13); the origin is
+    // recorded only to three characters, and Canadian destinations likewise.
+    if (obj.shipping_quote != null) {
+      const q = obj.shipping_quote;
+      const bad = (m) => say(`"shipping_quote": ${m}`);
+      if (!isObject(q)) bad('must be an object');
+      else {
+        if (!(typeof q.rate_cad === 'number' && Number.isFinite(q.rate_cad) && q.rate_cad >= 0)) bad('"rate_cad" is the price shown on Find a Rate, as a number');
+        if (!text(q.service)) bad('"service" is the service name shown on Find a Rate');
+        if (q.quote_type !== 'counter') bad('"quote_type" is "counter", the public retail rate');
+        if (!(Number.isInteger(q.weight_g) && q.weight_g > 0 && q.weight_g <= 30000)) bad('"weight_g" is the parcel weight in whole grams, at most 30000');
+        if (!(Array.isArray(q.dims_cm) && q.dims_cm.length === 3 && q.dims_cm.every((d) => typeof d === 'number' && d > 0 && d <= 300))) bad('"dims_cm" is [length, width, height] in cm');
+        if (!(typeof q.origin_fsa === 'string' && /^[A-Z]\d[A-Z]$/.test(q.origin_fsa))) bad('"origin_fsa" is only the first three characters of the origin postal code, e.g. "V5L"');
+        if (!(typeof q.destination === 'string' && /^(CA [A-Z]\d[A-Z]|US \d{5}|(?!CA|US)[A-Z]{2})$/.test(q.destination))) bad('"destination" is "CA" and a postal-code prefix ("CA M5V"), "US" and a ZIP code ("US 90210"), or another two-letter country code');
+        if (!isDate(q.date) || (isDate(obj.date) && q.date > obj.date)) bad('"date" is the quote date, YYYY-MM-DD, on or before the line\'s date');
+      }
+      if (!(Array.isArray(obj.receipts) && obj.receipts.some((r) => typeof r === 'string' && RECEIPT.test(r)))) say('a line with "shipping_quote" needs its Find a Rate screenshot in "receipts"');
+    }
     if (obj.receipts != null && !Array.isArray(obj.receipts)) say('"receipts" must be a list');
     else if (obj.receipts != null) {
       const seen = new Set();
