@@ -56,6 +56,12 @@ Selling a lot in parts: record each piece as its own buy, or, after selling part
 
 `node scripts/rate.mjs --from <post office postal code> --to US:90210 [--to CA:M5V2T6] --weight-g 850 --dims 30x20x10` asks Canada Post's rating API for counter (retail) rates and prints them, with the Rule 13 rate (each destination's cheapest service, then the highest across destinations), what to enter on Find a Rate, and a `shipping_quote` template. The Canada Post developer agreement treats API results as confidential, so the script writes nothing and its output is never committed: it is for Kernel's decisions and the Controller's checks. The public record is the Find a Rate screenshot and the figure it shows. It reads `CANADAPOST_API_KEY` (`username:password`) and `CANADAPOST_ENV` (`production` or `development`) from the environment; it needs Node.js 20 or later and no packages.
 
+## BrickLink cross-check (LEGO)
+
+`node scripts/comps.mjs --item 70779-1 [--type SET] [--condition used|new] [--days 60] [--currency USD] [--country US | --region north_america]` asks BrickLink's price guide API for the item's sales in the last six months and prints those within `--days`, newest first, with the lowest of the last three. BrickLink sales carry no links and "used" mixes complete and incomplete sets, so they cross-check Kernel's eBay sold comps and are never Rule 13 comps themselves. BrickLink's API terms forbid storing its data or showing it stale, so the script writes nothing and its output is never committed: it is for Kernel's decisions and the Controller's checks. When a line cites BrickLink, the public record is a screenshot of the item's public price guide page (the script prints its link); that page shows prices in the viewer's currency. It reads `BRICKLINK_CONSUMER_KEY`, `BRICKLINK_CONSUMER_SECRET`, `BRICKLINK_TOKEN` and `BRICKLINK_TOKEN_SECRET` from the environment; it needs Node.js 20 or later and no packages.
+
+The term 'BrickLink' is a trademark of the LEGO Group BrickLink. This application uses the BrickLink API but is not endorsed or certified by LEGO BrickLink, Inc.
+
 ## Entry schema
 
 Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correction`, `death`, `reload`, `note`, `check`.
