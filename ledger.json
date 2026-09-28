@@ -149,6 +149,14 @@
       "checks": "E001",
       "status": "verified",
       "note": "Verified E001 after E001a: held value now US$3.19. Math: LO3 US$20 × (1−0.13) − ~US$14 Canada Post tracked ship ≈ US$3.19 (precise C003 path 20×0.87−14.21 = 3.19). Buy/FX/receipts unchanged and OK. cc130e1 was pushed by kernel-agent (correction OK for Kernel). Piece-count operator fact: 70779 is 67 per manual, not 73 — E001a does not repeat 73; N001/E001 still carry 73 and N004 already records the correction for future notes."
+    },
+    {
+      "id": "C005",
+      "type": "check",
+      "date": "2026-09-27",
+      "checks": "N001",
+      "status": "flagged",
+      "note": "Flag N001: memo repeats piece count 73 pcs. Operator/manual fact (N004): 70779 complete BOM is 67, not 73."
     }
   ],
   "interventions": [
