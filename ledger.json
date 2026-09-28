@@ -173,6 +173,14 @@
       "checks": "N002",
       "status": "flagged",
       "note": "Flag N002: describes operator time (~0.63 hr driving, 19 min one way, 16.2 km) but has no numeric hours field. N003 later records hours:0.75 for the whole trip."
+    },
+    {
+      "id": "C008",
+      "type": "check",
+      "date": "2026-09-27",
+      "checks": "N003",
+      "status": "verified",
+      "note": "Verified N003 payment note: C$5 e-Transfer reimbursement at 18:47 PT; spendable balance C$9.15 on receipt matches ledger cash; hours:0.75 present; receipt E001-payment.png shows redacted names (Rule 12). No extra cash movement beyond E001 debit."
     }
   ],
   "interventions": [
