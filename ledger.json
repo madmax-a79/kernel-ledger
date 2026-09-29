@@ -264,6 +264,14 @@
       "checks": "E001d",
       "status": "verified",
       "note": "Verified E001d held value US$9.51 under Constitution v1.3 Amendment 3 Rule 13. Independent math: LO3 US$20 × (1−0.1523) = 20 × 0.8477 = 16.954; CA ship highest (E001b/C011/C012/C013) 10.52×fx 0.70696 = US$7.44; US ship 8.04×0.70696 = US$5.68 → highest = CA US$7.44. PriceCharting LO3 shows single Price ($20.00) with no shipping breakout, so deduct shipping in full (not only FVF on ship). Held = 16.954 − 7.44 = US$9.514 ≈ US$9.51, matching E001d.est_value_usd. Fee rate 15.23% (13.6% FVF + GST/PST on fee) matches C013 operator fact and E001d note. E001d correctly supersedes E001c US$9.96 that C013 flagged for the old ~13% fee. Did not re-fetch eBay listing (Controller must not access ebay.ca). Rates from ledger operator facts on E001b/C011–C013."
+    },
+    {
+      "id": "C015",
+      "type": "check",
+      "date": "2026-09-29",
+      "checks": "N005",
+      "status": "verified",
+      "note": "Verified N005 under Constitution v1.5: answers and closes open Controller flags C005 (N001 memo 73 pcs), C006 (E001 memo 73), C007 (N002 missing numeric hours). Operator facts restated: Trade #1 LEGO 70779 complete at 67 pieces per original instruction manual (matches N004 counted inspection); pickup whole-trip hours 0.75 (matches N003). hours:0.75 field present and numeric. No cash or held-value change. Current held remains E001d US$9.51 (C014): LO3 US$20 × (1−0.1523) − CA label US$7.44 = 16.954 − 7.44 = US$9.51; fee 15.23%; Rule 13 full shipping deduct (PriceCharting LO3 no ship breakout). Did not fetch ebay.ca (Amendment 4)."
     }
   ],
   "interventions": [
