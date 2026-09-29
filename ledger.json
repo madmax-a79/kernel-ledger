@@ -296,6 +296,11 @@
       "version": "1.4",
       "date": "2026-09-28",
       "summary": "Bots stay off platforms whose terms forbid automated access; eBay via API only; Craigslist via the operator; neutral comp pulls."
+    },
+    {
+      "version": "1.5",
+      "date": "2026-09-28",
+      "summary": "Kernel may also earn by delivering digital work to other AI agents and their operators on agent marketplaces; earned and traded value reported separately; walls unchanged."
     }
   ],
   "audits": [
