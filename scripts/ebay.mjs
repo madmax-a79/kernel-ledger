@@ -18,9 +18,10 @@
 // Limits, which stop mistakes and manipulation through this script (the Controller's audit catches the rest):
 // - The token carries two scopes: sell.inventory and sell.fulfillment.readonly.
 // - Only a buy the published ledger (main on GitHub) still holds can be listed: one unit, fixed price, no Best Offer.
-// - No list or revise below the floor: the price that nets the buy's est_value_usd after eBay's final value fee,
-//   est_value_usd / (1 - FEE_RATE), taking est_value_usd as last re-marked by a correction the Controller has not
-//   flagged, converted at the Bank of Canada's latest rate for a CAD listing. To price lower, append a correction first.
+// - No list or revise below the floor: the price that nets the buy's est_value_usd after eBay's final value fee and
+//   the tax on it, est_value_usd / (1 - FEE), taking est_value_usd as last re-marked by a correction the Controller
+//   has not flagged, converted at the Bank of Canada's latest rate for a CAD listing. To price lower, append a
+//   correction first.
 // - revise changes only the price; end needs the SKU; nothing ends or deletes in bulk.
 // - Every eBay call is appended to the call log (EBAY_CALL_LOG) before it is sent, and again with its answer; so is
 //   every refusal. The log is hash-chained so edits show. (exchange, the operator's one-time token step, isn't logged.)
@@ -50,8 +51,15 @@ const LEDGER = 'https://raw.githubusercontent.com/madmax-a79/kernel-ledger/main/
 const FX = 'https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?recent=1';
 // eBay's final value fee for most categories (LEGO, cameras and tools among them) for a seller registered in Canada,
 // charged on the total amount of the sale: https://www.ebay.ca/help/selling/fees-credits-invoices/selling-fees?id=4822
-// (checked 2026-09-28). It lives here, not in the environment, so Kernel and the Controller's audit use the same one.
+// (checked 2026-09-28). eBay's fees carry 5% GST and 7% BC PST (Bulletin PST 142). PST never comes back, and the
+// operator isn't GST-registered, so the GST doesn't either (if that changes, FEE_TAX becomes 0.07): the fee costs
+// 13.6% x 1.12 = 15.232% of the sale. Books & Magazines, Movies & TV and Music charge 15.3% and are not
+// covered; if Kernel ever lists those, revisit the floor first.
+// These live here, not in the environment, so Kernel and the Controller's audit use the same rate.
 const FEE_RATE = 0.136;
+const FEE_TAX = 0.12;
+const FEE = FEE_RATE * (1 + FEE_TAX);
+const pct = (x) => `${+(x * 100).toFixed(3)}%`;
 const HOSTS = {
   production: { auth: 'https://auth.ebay.com/oauth2/authorize', token: 'https://api.ebay.com/identity/v1/oauth2/token', inventory: 'https://api.ebay.com/sell/inventory/v1', fulfillment: 'https://apiz.ebay.com/sell/fulfillment/v1', item: { EBAY_CA: 'https://www.ebay.ca/itm/', EBAY_US: 'https://www.ebay.com/itm/' } },
   sandbox: { auth: 'https://auth.sandbox.ebay.com/oauth2/authorize', token: 'https://api.sandbox.ebay.com/identity/v1/oauth2/token', inventory: 'https://api.sandbox.ebay.com/sell/inventory/v1', fulfillment: 'https://api.sandbox.ebay.com/sell/fulfillment/v1', item: { EBAY_CA: 'https://sandbox.ebay.com/itm/', EBAY_US: 'https://sandbox.ebay.com/itm/' } },
@@ -272,8 +280,8 @@ async function floorFor(ctx, f, sku, currency) {
   const h = f.held.get(sku);
   if (!h) fail(`${sku} is not a buy the published ledger holds (sold, lost to a death, or not appended and pushed yet)`);
   // est_value_usd is net of fees, so the floor is the price that nets it, rounded up to the cent.
-  const gross = (h.usd * (await f.perUsd(currency))) / (1 - FEE_RATE);
-  return { amount: Math.ceil(gross * 100 - 1e-9) / 100, basis: `${h.basis} ${h.usd.toFixed(2)} USD / (1 - ${(FEE_RATE * 100).toFixed(1)}% final value fee)` };
+  const gross = (h.usd * (await f.perUsd(currency))) / (1 - FEE);
+  return { amount: Math.ceil(gross * 100 - 1e-9) / 100, basis: `${h.basis} ${h.usd.toFixed(2)} USD / (1 - ${pct(FEE)} fee: ${pct(FEE_RATE)} plus ${pct(FEE_TAX)} GST and PST on it)` };
 }
 
 // ---- commands -----------------------------------------------------------------------------------------
