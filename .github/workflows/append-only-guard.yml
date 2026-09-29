@@ -64,10 +64,10 @@ jobs:
           // ---- Ledger rules. The same block is in scripts/append.mjs and in the append-only guard
           // ---- (.github/workflows/append-only-guard.yml); change both together.
           const ARRAYS = ['entries', 'interventions', 'manipulation', 'amendments', 'audits'];
-          const TYPES = ['buy', 'sell', 'pass', 'correction', 'death', 'reload', 'note', 'check'];
+          const TYPES = ['buy', 'sell', 'pass', 'correction', 'death', 'reload', 'note', 'check', 'earn'];
           const STATUSES = ['verified', 'flagged'];
           // Numbers the page does arithmetic with, and the lowest value each may take.
-          const NUMBERS = { trade: 1, amount_cad: 0, fx_usd_per_cad: 0, amount_usd: 0, net_usd: -Infinity, est_value_usd: 0, fees_usd: 0, shipping_usd: 0, hours: 0, km: 0 };
+          const NUMBERS = { trade: 1, amount_cad: 0, fx_usd_per_cad: 0, amount_usd: 0, net_usd: -Infinity, est_value_usd: 0, fees_usd: 0, shipping_usd: 0, hours: 0, km: 0, price: 0, fee: 0, net: 0 };
           // What each log line on the page shows; without these the line renders blank.
           const LOG_FIELDS = { interventions: ['date', 'kind', 'detail'], manipulation: ['date', 'channel', 'summary'], amendments: ['version', 'date', 'summary'], audits: ['date', 'note'] };
           const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
@@ -76,7 +76,9 @@ jobs:
           // Control characters other than tab, newline and carriage return, and bidirectional overrides.
           const HIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
           // Line types whose net_usd moves cash on the page.
-          const CASH_TYPES = ['buy', 'sell', 'correction', 'reload'];
+          const CASH_TYPES = ['buy', 'sell', 'correction', 'reload', 'earn'];
+          // Rule 26: the only kinds of digital work Kernel may be paid for, in the constitution's words.
+          const EARN_CATEGORIES = ['research and summaries', 'data cleanup', 'structured writing and editing', 'code and small automations', 'transcription and translation'];
 
           const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
           const text = (v) => typeof v === 'string' && v.trim() !== '';
@@ -178,6 +180,28 @@ jobs:
                   if (count('reload') >= count('death')) say('a reload needs a death entry first');
                   if (count('death') >= lives) say(`all ${lives} lives are used`);
                   break;
+                case 'earn': {
+                  // Rule 26: pay for digital work from an agent marketplace, in fiat through escrow. price - fee = net, in the
+                  // payout's currency; net_usd is what reached the challenge wallet; the payout receipt is a file.
+                  need('marketplace');
+                  if (!text(obj.category)) say(`missing "category" (one of: ${EARN_CATEGORIES.join('; ')})`);
+                  else if (!EARN_CATEGORIES.includes(obj.category)) say(`"category" must be one of: ${EARN_CATEGORIES.join('; ')} (Rule 26)`);
+                  if (obj.currency !== 'USD' && obj.currency !== 'CAD') say('"currency" is the payout\'s currency, "USD" or "CAD"');
+                  ['price', 'fee', 'net', 'net_usd'].forEach(num);
+                  const [price, fee, net, usd] = [obj.price, obj.fee, obj.net, obj.net_usd];
+                  if (typeof usd === 'number' && !(usd > 0)) say('an earn adds cash, so "net_usd" must be more than 0');
+                  if ([price, fee, net].every((v) => typeof v === 'number') && Math.abs(price - fee - net) > 0.005) say('"net" is "price" minus "fee"');
+                  if (obj.currency === 'USD' && typeof net === 'number' && typeof usd === 'number' && Math.abs(net - usd) > 0.005) say('for a USD payout, "net_usd" equals "net"');
+                  if (obj.currency === 'CAD') {
+                    if (typeof obj.fx_usd_per_cad !== 'number') say('a CAD payout needs "fx_usd_per_cad", the Bank of Canada rate');
+                    else if (typeof net === 'number' && typeof usd === 'number' && Math.abs(net * obj.fx_usd_per_cad - usd) > 0.01) say('for a CAD payout, "net_usd" is "net" times "fx_usd_per_cad", to the cent');
+                  }
+                  if (!(Array.isArray(obj.receipts) && obj.receipts.some((r) => typeof r === 'string' && RECEIPT.test(r)))) say('an earn needs its payout receipt, a receipts/ file, in "receipts"');
+                  if (obj.trade != null) say('an earn is not a trade, so it carries no "trade"');
+                  if (obj.est_value_usd != null) say('an earn holds nothing, so it carries no "est_value_usd"');
+                  for (const k of ['client', 'customer', 'buyer']) if (obj[k] != null) say(`"${k}": client identity is never published (Rule 26)`);
+                  break;
+                }
                 case 'check':
                   ref('checks', TYPES.filter((t) => t !== 'check'));
                   need('status');

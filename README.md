@@ -103,7 +103,7 @@ The operator's one-time setup uses `consent-url` and `exchange --code …` (prin
 
 ## Entry schema
 
-Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correction`, `death`, `reload`, `note`, `check`.
+Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correction`, `death`, `reload`, `note`, `check`, `earn`.
 
 ```json
 {
@@ -136,8 +136,29 @@ Field rules:
 - A `correction` entry carries `"corrects": "E001"`, plus `net_usd` (cash delta, if any) and/or `est_value_usd` (new held value).
 - A `death` entry zeroes cash and clears held items; a `reload` entry carries `"net_usd": 10`.
 - A `check` entry (Controller) carries `"checks": "E001"`, `"status": "verified" | "flagged"`, and `"note"`.
+- An `earn` entry (Rule 26) records pay for digital work delivered through an agent marketplace. It carries:
+  - `marketplace`;
+  - `category`, one of Rule 26's five: `"research and summaries"`, `"data cleanup"`, `"structured writing and editing"`, `"code and small automations"`, `"transcription and translation"`;
+  - `currency` of the payout, `"USD"` or `"CAD"`;
+  - `price`, `fee` and `net` in that currency, where `net` = `price` − `fee`;
+  - `net_usd`, what reached the challenge wallet: equal to `net` for USD, `net` × `fx_usd_per_cad` for CAD;
+  - the payout receipt as a `receipts/` file;
+  - optionally a `title` and a `memo`.
+
+  It never names the client.
+
+  ```json
+  {"id": "W001", "type": "earn", "date": "2026-10-05", "title": "Cleaned a 2,000-row product CSV", "marketplace": "…", "category": "data cleanup", "currency": "USD", "price": 40.00, "fee": 8.00, "net": 32.00, "net_usd": 32.00, "receipts": ["receipts/W001-payout.png"]}
+  ```
 - `interventions`, `manipulation`, `amendments` and `audits` are separate arrays at the top level; the operator appends interventions, Kernel or the Controller appends manipulation attempts, the operator appends amendments, the auditor's notes are appended by the operator.
 
-`scripts/append.mjs` and the guard enforce these: `id` is letters, digits, `.`, `_`, `-` and unique; a `sell` closes a `buy` that is not already sold; a `buy` has `net_usd` of 0 or less and an `est_value_usd`; only `buy`, `sell`, `correction` and `reload` carry `net_usd`; a correction's `est_value_usd` re-marks a buy that is still held; a `death` happens only while alive and within the lives; a `reload` follows a `death` and carries the starting $10; a `check` names an existing entry and a status; a line is never dated before the entry it closes, corrects or checks, nor before `start_date`; amounts are numbers, none below zero except `net_usd`; `trade` goes up by at most one; dates are real and not in the future (Vancouver time); `comps` and `listing` are http(s) links; receipts are http(s) links or files named `receipts/<name>.jpg` (or `.jpeg`, `.png`, `.webp`, `.gif`, `.heic`, `.pdf`, any case) that are in the same commit, never replacing an existing one; no control or bidirectional-override characters. Log lines need the fields the page shows: interventions `date`, `kind`, `detail`; manipulation `date`, `channel`, `summary`; amendments `version` (like `"1.1"`), `date`, `summary`; audits `date`, `note`.
+`scripts/append.mjs` and the guard enforce these: `id` is letters, digits, `.`, `_`, `-` and unique; a `sell` closes a `buy` that is not already sold; a `buy` has `net_usd` of 0 or less and an `est_value_usd`; only `buy`, `sell`, `correction`, `reload` and `earn` carry `net_usd`; an `earn` adds cash (`net_usd` above 0) in one of Rule 26's categories, with `net` = `price` − `fee`, `net_usd` matching `net` (at `fx_usd_per_cad` for CAD), its payout receipt as a file, no `trade`, no `est_value_usd`, and no `client`, `customer` or `buyer` field; a correction's `est_value_usd` re-marks a buy that is still held; a `death` happens only while alive and within the lives; a `reload` follows a `death` and carries the starting $10; a `check` names an existing entry and a status; a line is never dated before the entry it closes, corrects or checks, nor before `start_date`; amounts are numbers, none below zero except `net_usd`; `trade` goes up by at most one; dates are real and not in the future (Vancouver time); `comps` and `listing` are http(s) links; receipts are http(s) links or files named `receipts/<name>.jpg` (or `.jpeg`, `.png`, `.webp`, `.gif`, `.heic`, `.pdf`, any case) that are in the same commit, never replacing an existing one; no control or bidirectional-override characters. Log lines need the fields the page shows: interventions `date`, `kind`, `detail`; manipulation `date`, `channel`, `summary`; amendments `version` (like `"1.1"`), `date`, `summary`; audits `date`, `note`.
 
 The Challenge Value on the page is computed from the entries: cash (start $10, plus every `net_usd`, plus reloads) plus held items at `est_value_usd`. If the page and Kernel's own number disagree, the page is right and Kernel's memo is wrong.
+
+Under the Challenge Value, the page splits it in two, as Rule 13 requires.
+
+- **Earned** is the `net_usd` of the current life's `earn` lines, plus corrections to them.
+- **Traded** is the rest: the Challenge Value minus Earned. It includes the starting $10 and everything trading made or lost, even when trading used earned money.
+
+The two always add up to the Challenge Value. A death clears both, like everything else in that life. A flagged `earn` counts for nothing until a later check verifies it.

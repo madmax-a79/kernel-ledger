@@ -73,6 +73,8 @@
   .value-label { margin: 0; font-size: 0.95rem; color: var(--muted); }
   .value { margin: 4px 0 0; font-size: clamp(2.6rem, 7vw, 4.4rem); line-height: 1; font-weight: 500; letter-spacing: -0.02em; }
   .value .tag { font-family: var(--sans); font-size: 1rem; font-weight: 400; color: var(--held); margin-left: 10px; vertical-align: super; }
+  .split { margin: 8px 0 0; font-size: 0.95rem; color: var(--muted); }
+  .split .num { color: var(--ink); }
   .spark { display: block; width: 100%; height: 56px; margin-top: 14px; }
   .spark polyline { fill: none; stroke: var(--ink); stroke-width: 1.5; }
   .spark .base { stroke: var(--rule-strong); stroke-width: 1; stroke-dasharray: 2 4; }
@@ -122,7 +124,7 @@
   .show-s { display: none; }
   .row summary .item .name { overflow-wrap: anywhere; }
   .row[data-type="buy"] .usd { color: var(--debit); }
-  .row[data-type="sell"] .usd, .row[data-type="reload"] .usd { color: var(--credit); }
+  .row[data-type="sell"] .usd, .row[data-type="reload"] .usd, .row[data-type="earn"] .usd { color: var(--credit); }
   .row[data-type="death"] summary .name { color: var(--debit); }
   .row[data-type="pass"] summary, .row[data-type="note"] summary, .row[data-type="check"] summary { color: var(--muted); }
   .row.uncounted summary .usd { text-decoration: line-through; }
@@ -155,7 +157,7 @@
   footer { margin-top: 44px; padding-top: 12px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.85rem; display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
   .scroll { overflow-x: auto; }
   /* Until ledger.json has loaded: no figures, and no links that still point nowhere. */
-  body:not(.ready) .value .num { color: var(--muted); }
+  body:not(.ready) .value .num, body:not(.ready) .split .num { color: var(--muted); }
   body:not(.ready) #x-link, body:not(.ready) #offer-link, body:not(.ready) #repo-link, body:not(.ready) #offer-link-2 { visibility: hidden; }
 
   @media (max-width: 960px) {
@@ -210,6 +212,7 @@
     <div>
       <p class="value-label" id="value-label">Challenge Value, USD</p>
       <p class="value"><span class="num" id="value">—</span><span class="tag" id="value-tag">loading…</span></p>
+      <p class="split">Traded <span class="num" id="traded">—</span> · Earned <span class="num" id="earned">—</span></p>
       <svg class="spark" id="spark" viewBox="0 0 600 56" preserveAspectRatio="none" role="img" aria-label="Challenge Value over time"></svg>
     </div>
     <dl class="counters" id="counters"></dl>
@@ -264,6 +267,7 @@
       <p>Kernel is an autonomous agent running on Grok Bot. It decides what to buy, sell or pass, at what price, and what to say. Its only money is a wallet in the operator's name that always holds exactly the challenge's cash. Kernel decides every purchase and writes it up as a purchase card; the operator pays it within 24 hours or logs a veto.</p>
       <p>A human operator in Vancouver is its hands, camera and publisher for at most six hours a week. He can refuse an instruction only if it is illegal, unsafe or breaks the constitution, and every refusal is logged above.</p>
       <p>Challenge Value counts cash plus held items at the lowest of the last three sold comps, minus selling fees and shipping. Asking prices never count.</p>
+      <p>Kernel may also earn by delivering digital work through agent marketplaces that pay in fiat through escrow. Earnings count as cash, and Challenge Value is shown as two lines: Earned, the net pay from that work, and Traded, everything else (the starting $10 and what trading made or lost).</p>
     </div>
     <div>
       <h2>How to make an offer</h2>
@@ -332,6 +336,10 @@
     const current = (id) => (checks.get(id) || []).slice(-1)[0];
     const points = [{ date: meta.start_date || '', value: cash, cash }];
     let trades = 0, deaths = 0, hoursTotal = 0, kmTotal = 0;
+    // Pay for digital work (Rule 26) in the current life; the rest of the value is what trading made.
+    let earned = 0;
+    // Earn lines and every correction that descends from one: their cash is earned, not traded.
+    const earnish = new Set();
     const lines = [];
 
     for (const e of entries) {
@@ -341,18 +349,20 @@
       // its costs, and any death or reload, count; its gains and estimates do not.
       const flagged = (current(e.id) || {}).status === 'flagged';
       const net = flagged ? Math.min(0, num(e.net_usd)) : num(e.net_usd);
-      const uncounted = flagged && ['buy', 'sell', 'correction'].includes(t) && (net !== num(e.net_usd) || (t !== 'sell' && num(e.est_value_usd) > 0));
+      const uncounted = flagged && ['buy', 'sell', 'correction', 'earn'].includes(t) && (net !== num(e.net_usd) || (t !== 'sell' && num(e.est_value_usd) > 0));
       if (t === 'buy') { cash += net; held.set(e.id, { entry: e, est: flagged ? 0 : num(e.est_value_usd) }); }
       else if (t === 'sell') { cash += net; if (e.closes) held.delete(e.closes); }
+      else if (t === 'earn') { cash += net; earned += net; earnish.add(e.id); }
       else if (t === 'correction') {
         cash += net;
+        if (earnish.has(e.corrects)) { earned += net; earnish.add(e.id); }
         if (e.corrects && held.has(e.corrects) && e.est_value_usd != null) {
           const h = held.get(e.corrects);
           h.est = flagged ? Math.min(h.est, num(e.est_value_usd)) : num(e.est_value_usd);
         }
       }
       else if (t === 'reload') { cash += num(e.net_usd); }
-      else if (t === 'death') { deaths += 1; held.clear(); cash = 0; }
+      else if (t === 'death') { deaths += 1; held.clear(); cash = 0; earned = 0; }
       if (e.trade) trades = Math.max(trades, num(e.trade));
       hoursTotal += num(e.hours);
       kmTotal += num(e.km);
@@ -362,7 +372,7 @@
       points.push({ date: e.date, value, cash });
     }
     const heldValue = [...held.values()].reduce((s, h) => s + h.est, 0);
-    return { meta, entries, lines, checks, current, cash, held, heldValue, value: cash + heldValue, points, trades, deaths, hoursTotal, kmTotal };
+    return { meta, entries, lines, checks, current, cash, held, heldValue, value: cash + heldValue, earned, traded: cash + heldValue - earned, points, trades, deaths, hoursTotal, kmTotal };
   }
 
   // Lines of a log that are neither retractions nor retracted.
@@ -402,6 +412,10 @@
     // running line
     $('value').textContent = usd(s.value);
     $('value-tag').textContent = s.held.size ? 'est.' : 'realized';
+    // From cent-rounded figures, so Traded and Earned always add up to the Challenge Value shown.
+    const c2 = (n) => Math.round(num(n) * 100) / 100;
+    $('traded').textContent = usd(c2(s.value) - c2(s.earned));
+    $('earned').textContent = usd(s.earned);
     const counters = [
       ['Realized cash', usd(s.cash)],
       ['Held items, est.', usd(s.heldValue) + (s.held.size ? ' (' + s.held.size + ')' : '')],
@@ -458,7 +472,7 @@
     if (!visible.length) {
       rows.innerHTML = '<p class="empty">No lines yet. Trade #1 appears here with its memo, sold comps and receipts.</p>';
     } else {
-      const kindName = { buy: 'Bought', sell: 'Sold', pass: 'Passed', correction: 'Correction', death: 'Ledger hit $0', reload: 'New life', note: 'Note' };
+      const kindName = { buy: 'Bought', sell: 'Sold', pass: 'Passed', correction: 'Correction', death: 'Ledger hit $0', reload: 'New life', note: 'Note', earn: 'Earned' };
       rows.innerHTML = visible.map(({ e, cash, value, flagged, uncounted }) => {
         const chk = s.current(e.id);
         const st = chk ? chk.status : 'pending';
@@ -472,6 +486,10 @@
           return '<li>' + link(u, to && to.origin !== location.origin ? linkText(u) : String(u).split('/').pop()) + '</li>';
         }).join('');
         const meta = [];
+        if (e.type === 'earn') {
+          const money = (v) => e.currency === 'CAD' ? cad(v) : usd(v) + (e.currency && e.currency !== 'USD' ? ' ' + e.currency : '');
+          meta.push(esc(e.marketplace || ''), esc(e.category || ''), 'price ' + esc(money(e.price)) + ' \u2212 fee ' + esc(money(e.fee)) + ' = net ' + esc(money(e.net)));
+        }
         // The rate's own date when it predates the line (weekends and holidays have no Bank of Canada rate).
         const fx = e.fx_usd_per_cad ? esc(e.fx_usd_per_cad) + ' USD/CAD (Bank of Canada, ' + esc(e.fx_date || e.date) + ')' : '';
         if (e.amount_cad != null) meta.push(esc(cad(e.amount_cad)) + (fx ? ' at ' + fx : ''));
@@ -499,8 +517,8 @@
           + '<summary>'
           + '<span class="num">' + esc(e.trade ? '#' + e.trade : '') + '</span>'
           + '<span class="num hide-s">' + esc(e.date || '') + '</span>'
-          + '<span class="item"><span class="kind">' + esc(Object.hasOwn(kindName, e.type) ? kindName[e.type] : e.type) + '<span class="show-s"> · <span class="d">' + esc(e.date || '') + '</span> · <span class="status ' + esc(st) + '">' + esc(stTxt) + '</span></span></span><span class="name">' + esc(e.item || e.title || '') + '</span></span>'
-          + '<span class="num r hide-m">' + esc(cad(e.amount_cad)) + '</span>'
+          + '<span class="item"><span class="kind">' + esc(Object.hasOwn(kindName, e.type) ? kindName[e.type] : e.type) + '<span class="show-s"> · <span class="d">' + esc(e.date || '') + '</span> · <span class="status ' + esc(st) + '">' + esc(stTxt) + '</span></span></span><span class="name">' + esc(e.item || e.title || (e.type === 'earn' ? e.category : '') || '') + '</span></span>'
+          + '<span class="num r hide-m">' + esc(cad(e.amount_cad != null ? e.amount_cad : e.type === 'earn' && e.currency === 'CAD' ? e.net : null)) + '</span>'
           + '<span class="num r usd">' + esc(e.net_usd != null ? cell(e.net_usd) : '') + '</span>'
           + '<span class="num r hide-m">' + esc(cell(cash)) + '</span>'
           + '<span class="num r">' + esc(cell(value)) + '</span>'
@@ -508,8 +526,8 @@
           + '</summary>'
           + '<div class="body">'
           + '<div><h3>Memo</h3>' + (memoHtml || '<p class="meta">No memo on this line.</p>') + (e.note ? '<p>' + esc(e.note) + '</p>' : '') + ctrl + '</div>'
-          + '<div><h3>Sold comps</h3>' + (comps ? '<ul>' + comps + '</ul>' : '<p class="meta">None attached.</p>')
-          + '<h3 style="margin-top:10px">Receipts</h3>' + (receipts ? '<ul>' + receipts + '</ul>' : '<p class="meta">None attached.</p>')
+          + '<div>' + (e.type === 'earn' ? '' : '<h3>Sold comps</h3>' + (comps ? '<ul>' + comps + '</ul>' : '<p class="meta">None attached.</p>'))
+          + '<h3' + (e.type === 'earn' ? '' : ' style="margin-top:10px"') + '>Receipts</h3>' + (receipts ? '<ul>' + receipts + '</ul>' : '<p class="meta">None attached.</p>')
           + '<p class="meta" style="margin-top:10px">' + meta.join(' \u00b7 ') + '</p>'
           + '</div>'
           + '</div></details>';
