@@ -101,6 +101,29 @@ Environment, from the bots' secret store:
 
 The operator's one-time setup uses `consent-url` and `exchange --code …` (prints the refresh token; nothing is saved), which need `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` and `EBAY_RUNAME`, then `location`, which runs like the bots' commands, with the secret-store values above. The script needs Node.js 20 or later and no packages.
 
+## Checking earn lines (Controller)
+
+`node scripts/earncheck.mjs` is the Controller's read-only check of every `earn` line (Rule 26). It writes nothing and never calls a marketplace. For each line in the published ledger (main on GitHub; `--ledger ledger.json` checks a local file), it flags:
+
+- a category that isn't one of Rule 26's five;
+- price minus fee not equal to net;
+- `net_usd` that doesn't match `net`;
+- a CAD payout without `fx_date`, or whose `fx_usd_per_cad` isn't 1 ÷ the Bank of Canada's USD/CAD rate published on that date;
+- no payout receipt file, or one that isn't in the repo;
+- a client, customer or buyer field at any depth;
+- no id, or no marketplace record before it.
+
+The marketplace record comes from the marketplace call log (`WORK_CALL_LOG`, or `--calllog`, the same hash chain as the eBay call log).
+
+- Exactly one of its lines links the earn line to a job: `{"marketplace": "…", "job": "…", "earn": "W001"}`.
+- That job backs no other earn line.
+- The same line or an earlier one records the job's agreed price and funded escrow: `{"marketplace": "…", "job": "…", "price": "40.00 USD", "escrow": "funded"}`.
+- `marketplace` equals the earn line's, and both lines are dated (`at`) on or before the earn line's date.
+
+Until the marketplace scripts write these lines, every earn line is flagged.
+
+Every receipt that exists, files in the repo and links alike, is listed under `open`, because only a person or model looking at it can confirm the client's identity is covered. The check ends with the weekly pack's figures: Challenge Value, Traded and Earned, computed by the page's own code from this clone's `index.html`, so pull first. It exits with 0 when nothing is flagged, 1 when something is, and 2 when it couldn't check, for example because GitHub or the Bank of Canada didn't answer.
+
 ## Entry schema
 
 Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correction`, `death`, `reload`, `note`, `check`, `earn`.
@@ -141,18 +164,18 @@ Field rules:
   - `category`, one of Rule 26's five: `"research and summaries"`, `"data cleanup"`, `"structured writing and editing"`, `"code and small automations"`, `"transcription and translation"`;
   - `currency` of the payout, `"USD"` or `"CAD"`;
   - `price`, `fee` and `net` in that currency, where `net` = `price` − `fee`;
-  - `net_usd`, what reached the challenge wallet: equal to `net` for USD, `net` × `fx_usd_per_cad` for CAD;
+  - `net_usd`, what reached the challenge wallet: equal to `net` for USD, `net` × `fx_usd_per_cad` for CAD, with `fx_date` the date of that Bank of Canada rate;
   - the payout receipt as a `receipts/` file;
   - optionally a `title` and a `memo`.
 
-  It never names the client.
+  It never names the client: no field called client, customer or buyer, at any depth or capitalization (`memo.clientName` counts).
 
   ```json
   {"id": "W001", "type": "earn", "date": "2026-10-05", "title": "Cleaned a 2,000-row product CSV", "marketplace": "…", "category": "data cleanup", "currency": "USD", "price": 40.00, "fee": 8.00, "net": 32.00, "net_usd": 32.00, "receipts": ["receipts/W001-payout.png"]}
   ```
 - `interventions`, `manipulation`, `amendments` and `audits` are separate arrays at the top level; the operator appends interventions, Kernel or the Controller appends manipulation attempts, the operator appends amendments, the auditor's notes are appended by the operator.
 
-`scripts/append.mjs` and the guard enforce these: `id` is letters, digits, `.`, `_`, `-` and unique; a `sell` closes a `buy` that is not already sold; a `buy` has `net_usd` of 0 or less and an `est_value_usd`; only `buy`, `sell`, `correction`, `reload` and `earn` carry `net_usd`; an `earn` adds cash (`net_usd` above 0) in one of Rule 26's categories, with `net` = `price` − `fee`, `net_usd` matching `net` (at `fx_usd_per_cad` for CAD), its payout receipt as a file, no `trade`, no `est_value_usd`, and no `client`, `customer` or `buyer` field; a correction's `est_value_usd` re-marks a buy that is still held; a `death` happens only while alive and within the lives; a `reload` follows a `death` and carries the starting $10; a `check` names an existing entry and a status; a line is never dated before the entry it closes, corrects or checks, nor before `start_date`; amounts are numbers, none below zero except `net_usd`; `trade` goes up by at most one; dates are real and not in the future (Vancouver time); `comps` and `listing` are http(s) links; receipts are http(s) links or files named `receipts/<name>.jpg` (or `.jpeg`, `.png`, `.webp`, `.gif`, `.heic`, `.pdf`, any case) that are in the same commit, never replacing an existing one; no control or bidirectional-override characters. Log lines need the fields the page shows: interventions `date`, `kind`, `detail`; manipulation `date`, `channel`, `summary`; amendments `version` (like `"1.1"`), `date`, `summary`; audits `date`, `note`.
+`scripts/append.mjs` and the guard enforce these: `id` is letters, digits, `.`, `_`, `-` and unique; a `sell` closes a `buy` that is not already sold; a `buy` has `net_usd` of 0 or less and an `est_value_usd`; only `buy`, `sell`, `correction`, `reload` and `earn` carry `net_usd`; an `earn` adds cash (`net_usd` above 0) in one of Rule 26's categories, with `net` = `price` − `fee`, `net_usd` matching `net` (at `fx_usd_per_cad` for CAD, which also needs `fx_date`), its payout receipt as a file, no `trade`, no `est_value_usd`, and no client, customer or buyer field at any depth or capitalization; a correction's `est_value_usd` re-marks a buy that is still held; a `death` happens only while alive and within the lives; a `reload` follows a `death` and carries the starting $10; a `check` names an existing entry and a status; a line is never dated before the entry it closes, corrects or checks, nor before `start_date`; amounts are numbers, none below zero except `net_usd`; `trade` goes up by at most one; dates are real and not in the future (Vancouver time); `comps` and `listing` are http(s) links; receipts are http(s) links or files named `receipts/<name>.jpg` (or `.jpeg`, `.png`, `.webp`, `.gif`, `.heic`, `.pdf`, any case) that are in the same commit, never replacing an existing one; no control or bidirectional-override characters. Log lines need the fields the page shows: interventions `date`, `kind`, `detail`; manipulation `date`, `channel`, `summary`; amendments `version` (like `"1.1"`), `date`, `summary`; audits `date`, `note`.
 
 The Challenge Value on the page is computed from the entries: cash (start $10, plus every `net_usd`, plus reloads) plus held items at `est_value_usd`. If the page and Kernel's own number disagree, the page is right and Kernel's memo is wrong.
 

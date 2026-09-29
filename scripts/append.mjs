@@ -50,6 +50,9 @@ const HIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200e\u200f
 const CASH_TYPES = ['buy', 'sell', 'correction', 'reload', 'earn'];
 // Rule 26: the only kinds of digital work Kernel may be paid for, in the constitution's words.
 const EARN_CATEGORIES = ['research and summaries', 'data cleanup', 'structured writing and editing', 'code and small automations', 'transcription and translation'];
+// Words that name the client; a key containing any of them, in any form (clientName, clientname, BUYER_EMAIL, CUSTOMERs),
+// is a client field.
+const CLIENT_WORDS = ['client', 'customer', 'buyer'];
 
 const isObject = (o) => o !== null && typeof o === 'object' && !Array.isArray(o);
 const text = (v) => typeof v === 'string' && v.trim() !== '';
@@ -72,6 +75,19 @@ function same(a, b) {
   }
   return true;
 }
+
+// Every object key in a parsed value, at any depth; iterative.
+function keysDeep(v) {
+  const keys = [], todo = [v];
+  while (todo.length) {
+    const x = todo.pop();
+    if (x && typeof x === 'object') for (const [k, y] of Object.entries(x)) { if (!Array.isArray(x)) keys.push(k); todo.push(y); }
+  }
+  return keys;
+}
+// A key's letters alone: lookalike and fullwidth forms folded, accents and invisible characters dropped, lowercased.
+const flatKey = (k) => String(k).normalize('NFKD').replace(/[\p{M}\p{Default_Ignorable_Code_Point}]/gu, '').toLowerCase().replace(/[^a-z]/g, '');
+const clientKeys = (v) => [...new Set(keysDeep(v).filter((k) => CLIENT_WORDS.some((w) => flatKey(k).includes(w))))];
 
 // Nesting depth of a parsed value, and every string (keys included) in it; both iterative.
 function shape(v) {
@@ -164,13 +180,15 @@ function problems(array, obj, ledger, latestDate) {
         if ([price, fee, net].every((v) => typeof v === 'number') && Math.abs(price - fee - net) > 0.005) say('"net" is "price" minus "fee"');
         if (obj.currency === 'USD' && typeof net === 'number' && typeof usd === 'number' && Math.abs(net - usd) > 0.005) say('for a USD payout, "net_usd" equals "net"');
         if (obj.currency === 'CAD') {
+          if (obj.fx_date == null) say('a CAD payout needs "fx_date", the date of the Bank of Canada rate it uses');
           if (typeof obj.fx_usd_per_cad !== 'number') say('a CAD payout needs "fx_usd_per_cad", the Bank of Canada rate');
           else if (typeof net === 'number' && typeof usd === 'number' && Math.abs(net * obj.fx_usd_per_cad - usd) > 0.01) say('for a CAD payout, "net_usd" is "net" times "fx_usd_per_cad", to the cent');
         }
         if (!(Array.isArray(obj.receipts) && obj.receipts.some((r) => typeof r === 'string' && RECEIPT.test(r)))) say('an earn needs its payout receipt, a receipts/ file, in "receipts"');
         if (obj.trade != null) say('an earn is not a trade, so it carries no "trade"');
         if (obj.est_value_usd != null) say('an earn holds nothing, so it carries no "est_value_usd"');
-        for (const k of ['client', 'customer', 'buyer']) if (obj[k] != null) say(`"${k}": client identity is never published (Rule 26)`);
+        const named = clientKeys(obj);
+        if (named.length) say(`${named.map((k) => JSON.stringify(k)).join(', ')}: client identity is never published, so an earn line has no client, customer or buyer field at any depth (Rule 26)`);
         break;
       }
       case 'check':
