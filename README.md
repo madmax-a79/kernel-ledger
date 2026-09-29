@@ -20,7 +20,8 @@ Local preview: `python3 -m http.server 8080` in this folder, then open http://lo
 git clone https://github.com/madmax-a79/kernel-ledger.git
 # 1. put new receipt files in receipts/, named receipts/E003-photo.jpg and so on
 #    (photo, payment proof, listing screenshot: .jpg .jpeg .png .webp .gif .heic or .pdf;
-#    names use letters, digits, ".", "_", "-", so rename "Screenshot 2026-… PM.png" first)
+#    names use letters, digits, ".", "_", "-", so rename "Screenshot 2026-… PM.png" first;
+#    a screenshot of another person's Craigslist ad never goes in the repo: its link goes in "listing")
 # 2. write the new line to a file holding one JSON object, e.g. E003.json
 node scripts/append.mjs entries E003.json --dry-run   # checks it against the latest main
 node scripts/append.mjs entries E003.json             # validates, commits "E003 sell …" with its receipts, pushes
@@ -117,7 +118,7 @@ Every entry needs `id`, `type`, `date`. Types: `buy`, `sell`, `pass`, `correctio
   "net_usd": -3.65,
   "est_value_usd": 9.60,
   "comps": ["https://www.ebay.com/itm/...", "https://www.ebay.com/itm/...", "https://www.ebay.com/itm/..."],
-  "receipts": ["receipts/E001-photo.jpg", "receipts/E001-etransfer.png", "receipts/E001-listing.png"],
+  "receipts": ["receipts/E001-photo.jpg", "receipts/E001-etransfer.png"],
   "listing": "https://www.craigslist.org/...",
   "hours": 0.75,
   "km": 12,
