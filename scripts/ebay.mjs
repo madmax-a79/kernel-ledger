@@ -18,10 +18,12 @@
 // Limits, which stop mistakes and manipulation through this script (the Controller's audit catches the rest):
 // - The token carries two scopes: sell.inventory and sell.fulfillment.readonly.
 // - Only a buy the published ledger (main on GitHub) still holds can be listed: one unit, fixed price, no Best Offer.
-// - No list or revise below the floor: the buy's est_value_usd, as last re-marked by a correction the Controller
-//   has not flagged, converted at the Bank of Canada's latest rate for a CAD listing. To price lower, append a correction first.
+// - No list or revise below the floor: the price that nets the buy's est_value_usd after eBay's final value fee,
+//   est_value_usd / (1 - FEE_RATE), taking est_value_usd as last re-marked by a correction the Controller has not
+//   flagged, converted at the Bank of Canada's latest rate for a CAD listing. To price lower, append a correction first.
 // - revise changes only the price; end needs the SKU; nothing ends or deletes in bulk.
-// - Every eBay call, and every refusal, is appended to the call log (EBAY_CALL_LOG), hash-chained so edits show.
+// - Every eBay call is appended to the call log (EBAY_CALL_LOG) before it is sent, and again with its answer; so is
+//   every refusal. The log is hash-chained so edits show. (exchange, the operator's one-time token step, isn't logged.)
 // - Buyer data is never written anywhere: orders are cut down in memory to SKUs, amounts and statuses before
 //   anything is printed or logged, and the log records only how many orders came back and their SKUs.
 //
@@ -46,6 +48,10 @@ import { userInfo } from 'node:os';
 const SCOPES = ['https://api.ebay.com/oauth/api_scope/sell.inventory', 'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly'];
 const LEDGER = 'https://raw.githubusercontent.com/madmax-a79/kernel-ledger/main/ledger.json';
 const FX = 'https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?recent=1';
+// eBay's final value fee for most categories (LEGO, cameras and tools among them) for a seller registered in Canada,
+// charged on the total amount of the sale: https://www.ebay.ca/help/selling/fees-credits-invoices/selling-fees?id=4822
+// (checked 2026-09-28). It lives here, not in the environment, so Kernel and the Controller's audit use the same one.
+const FEE_RATE = 0.136;
 const HOSTS = {
   production: { auth: 'https://auth.ebay.com/oauth2/authorize', token: 'https://api.ebay.com/identity/v1/oauth2/token', inventory: 'https://api.ebay.com/sell/inventory/v1', fulfillment: 'https://apiz.ebay.com/sell/fulfillment/v1', item: { EBAY_CA: 'https://www.ebay.ca/itm/', EBAY_US: 'https://www.ebay.com/itm/' } },
   sandbox: { auth: 'https://auth.sandbox.ebay.com/oauth2/authorize', token: 'https://api.sandbox.ebay.com/identity/v1/oauth2/token', inventory: 'https://api.sandbox.ebay.com/sell/inventory/v1', fulfillment: 'https://api.sandbox.ebay.com/sell/fulfillment/v1', item: { EBAY_CA: 'https://sandbox.ebay.com/itm/', EBAY_US: 'https://sandbox.ebay.com/itm/' } },
@@ -176,10 +182,17 @@ async function send(url, init, what) {
   }
 }
 
+// Every call is written to the log before it is sent (so nothing reaches eBay unlogged) and again with its answer.
+function note(ctx, entry, unwritten) {
+  try { record(ctx, entry); } catch (e) { fail(`${unwritten}: cannot write the call log ${ctx.logPath} (${e instanceof Stop ? e.message : e.code || e.message})`); }
+}
+
 async function accessToken(ctx) {
   const form = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: ctx.env.refresh, scope: SCOPES.join(' ') });
+  const shown = 'oauth2/token (refresh)';
+  note(ctx, { event: 'send', api: 'identity', method: 'POST', path: shown }, `POST ${shown} was not sent`);
   const { r, data, error } = await send(ctx.urls.token, { method: 'POST', headers: { authorization: 'Basic ' + Buffer.from(`${ctx.env.id}:${ctx.env.secret}`).toString('base64'), 'content-type': 'application/x-www-form-urlencoded' }, body: form }, 'eBay');
-  record(ctx, { event: 'call', api: 'identity', method: 'POST', path: 'oauth2/token (refresh)', status: r ? r.status : null, ...(error ? { error } : {}) });
+  note(ctx, { event: 'answer', api: 'identity', method: 'POST', path: shown, status: r ? r.status : null, ...(error ? { error } : {}) }, `POST ${shown} reached eBay, but its answer is not in the call log`);
   if (error) fail(error);
   if (!r.ok || !data?.access_token) fail(`eBay refused the refresh token (${data?.error || 'HTTP ' + r.status}${data?.error_description ? ': ' + data.error_description : ''}); it may have expired or been revoked, so the operator runs consent-url and exchange again`);
   return data.access_token;
@@ -190,10 +203,11 @@ async function call(ctx, api, method, path, { query, body, absent } = {}) {
   for (const [k, v] of Object.entries(query || {})) url.searchParams.set(k, v);
   const headers = { authorization: 'Bearer ' + ctx.token, accept: 'application/json' };
   if (body) Object.assign(headers, { 'content-type': 'application/json', 'content-language': ctx.market.language });
+  const shown = url.pathname.replace(/^.*\/(inventory|fulfillment)\/v1/, '') + url.search;
+  note(ctx, { event: 'send', api, method, path: shown }, `${method} ${shown} was not sent`);
   const { r, data, error } = await send(url, { method, headers, body: body ? JSON.stringify(body) : undefined }, 'eBay');
   const errors = (data?.errors || []).map((e) => `${e.errorId}: ${e.longMessage || e.message}`);
-  const shown = url.pathname.replace(/^.*\/(inventory|fulfillment)\/v1/, '') + url.search;
-  record(ctx, { event: 'call', api, method, path: shown, status: r ? r.status : null, ...(errors.length ? { errors } : {}), ...(error ? { error } : {}) });
+  note(ctx, { event: 'answer', api, method, path: shown, status: r ? r.status : null, ...(errors.length ? { errors } : {}), ...(error ? { error } : {}) }, `${method} ${shown} reached eBay${r ? ` (HTTP ${r.status})` : ''}, but its answer is not in the call log`);
   if (error) fail(error);
   if (absent && absent(r.status, (data?.errors || []).map((e) => Number(e.errorId)))) return null;
   if (r.status === 401 || r.status === 403) fail(`eBay refused the call (HTTP ${r.status}) to ${method} ${shown}; check that the token was granted both scopes${errors.length ? '\n' + errors.join('\n') : ''}`);
@@ -238,8 +252,9 @@ async function floors(ctx) {
   const ledger = await getJson(ctx.urls.ledger + (ctx.test ? '' : `?t=${Date.now()}`), 'GitHub (the published ledger)');
   const held = holdings(ledger);
   let fx = null;
-  const inCurrency = async (usd, currency) => {
-    if (currency === 'USD') return usd;
+  // Listing-currency units per US dollar.
+  const perUsd = async (currency) => {
+    if (currency === 'USD') return 1;
     if (currency !== 'CAD') fail(`no floor for a ${currency} listing`);
     if (!fx) {
       const data = await getJson(ctx.urls.fx, 'the Bank of Canada');
@@ -248,15 +263,17 @@ async function floors(ctx) {
       if (!(rate > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(o?.d || '')) fail('the Bank of Canada gave no USD/CAD rate, so no floor can be set');
       fx = { date: o.d, cad_per_usd: rate };
     }
-    return Math.ceil(usd * fx.cad_per_usd * 100 - 1e-9) / 100;
+    return fx.cad_per_usd;
   };
-  return { held, inCurrency, fx: () => fx };
+  return { held, perUsd, fx: () => fx };
 }
 
 async function floorFor(ctx, f, sku, currency) {
   const h = f.held.get(sku);
   if (!h) fail(`${sku} is not a buy the published ledger holds (sold, lost to a death, or not appended and pushed yet)`);
-  return { amount: await f.inCurrency(h.usd, currency), basis: `${h.basis} ${h.usd.toFixed(2)} USD` };
+  // est_value_usd is net of fees, so the floor is the price that nets it, rounded up to the cent.
+  const gross = (h.usd * (await f.perUsd(currency))) / (1 - FEE_RATE);
+  return { amount: Math.ceil(gross * 100 - 1e-9) / 100, basis: `${h.basis} ${h.usd.toFixed(2)} USD / (1 - ${(FEE_RATE * 100).toFixed(1)}% final value fee)` };
 }
 
 // ---- commands -----------------------------------------------------------------------------------------

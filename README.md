@@ -79,9 +79,9 @@ node scripts/ebay.mjs audit                                                    #
 Limits:
 
 - The SKU is the buy's ledger id. Only a buy the published ledger (main on GitHub) still holds can be listed: one unit, fixed price, no Best Offer.
-- Nothing is listed or repriced below the buy's floor: its `est_value_usd`, as last re-marked by a correction the Controller hasn't flagged. For a CAD listing, the floor is converted at the Bank of Canada's latest rate. To price lower, Kernel first appends a correction that re-marks the buy.
+- Nothing is listed or repriced below the buy's floor: the price that nets its `est_value_usd` after eBay's final value fee, `est_value_usd ÷ (1 − 0.136)`, taking `est_value_usd` as last re-marked by a correction the Controller hasn't flagged. For a CAD listing, the floor is converted at the Bank of Canada's latest rate. The 13.6% is eBay.ca's fee for most categories (LEGO, cameras and tools among them); it is set in the script, so Kernel and the Controller's audit use the same rate. To price lower, Kernel first appends a correction that re-marks the buy.
 - `revise` changes only the price. `end` needs the SKU. Nothing ends or deletes listings in bulk.
-- Every eBay call, and every refusal, is appended to the call log `EBAY_CALL_LOG`. Each line carries the hash of the line before it, so an edited line shows. If the log can't be written, nothing is sent to eBay.
+- Every eBay call is appended to the call log `EBAY_CALL_LOG` before it is sent, and again with eBay's answer; so is every refusal. A call whose line can't be written isn't sent. Each line carries the hash of the line before it, so an edited line shows. (`exchange`, the operator's one-time token step, isn't logged.)
 - Buyer data is never written anywhere. Orders are cut down in memory to SKUs, amounts and statuses before anything is printed. The log records only how many orders came back and their SKUs.
 
 These limits cover calls made through the script. The token itself can do anything its two scopes allow, so the Controller checks eBay's own records every day:
@@ -98,7 +98,7 @@ Environment, from the bots' secret store:
 - `EBAY_PAYMENT_POLICY_ID`, `EBAY_RETURN_POLICY_ID`, `EBAY_FULFILLMENT_POLICY_ID`, `EBAY_LOCATION_KEY`
 - `EBAY_CALL_LOG`: one path outside both clones that both bots can append to
 
-The operator's one-time setup uses `consent-url`, `exchange --code …` (prints the refresh token; nothing is saved) and `location`. These also need `EBAY_RUNAME`. The script needs Node.js 20 or later and no packages.
+The operator's one-time setup uses `consent-url` and `exchange --code …` (prints the refresh token; nothing is saved), which need `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` and `EBAY_RUNAME`, then `location`, which runs like the bots' commands, with the secret-store values above. The script needs Node.js 20 or later and no packages.
 
 ## Entry schema
 
