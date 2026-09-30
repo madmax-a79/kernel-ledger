@@ -148,6 +148,7 @@
   .log ol { margin: 0; padding: 0; list-style: none; }
   .log li { padding: 8px 0; border-top: 1px solid var(--rule); font-size: 0.95rem; }
   .log li .when { color: var(--muted); font-size: 0.85rem; display: block; }
+  .log li .auditor { color: var(--muted); font-size: 0.85rem; display: block; margin-top: 4px; }
   .log .none { color: var(--muted); font-size: 0.95rem; padding: 8px 0; border-top: 1px solid var(--rule); }
   .log li.retracted s { color: var(--muted); }
 
@@ -546,7 +547,7 @@
     };
     list('interventions', data.interventions, (x) => '<span class="when">' + esc(x.date) + ' \u00b7 ' + esc(x.kind) + '</span>' + esc(x.detail), 'None yet.');
     list('manipulation', data.manipulation, (x) => '<span class="when">' + esc(x.date) + ' \u00b7 ' + esc(x.channel) + '</span>' + esc(x.summary) + (x.outcome ? ' \u2014 ' + esc(x.outcome) : ''), 'None yet.');
-    list('amendments', data.amendments, (x) => '<span class="when">' + esc(x.date) + ' \u00b7 v' + esc(x.version) + '</span>' + esc(x.summary), 'v1.0 in force. No amendments.');
+    list('amendments', data.amendments, (x) => '<span class="when">' + esc(x.date) + ' \u00b7 v' + esc(x.version) + '</span>' + esc(x.summary) + (x.auditor ? '<span class="auditor">Auditor: ' + esc(x.auditor) + '</span>' : ''), 'v1.0 in force. No amendments.');
     list('audits', data.audits, (x) => '<span class="when">' + esc(x.date) + ' \u00b7 ' + esc(x.by || 'auditor') + (x.week != null ? ' \u00b7 week ' + esc(x.week) : '') + '</span>' + esc(x.note), 'First note arrives after week 1.');
 
     $('foot-left').textContent = 'Public ledger, USD. Local amounts in CAD converted at the Bank of Canada rate on the completion date.';
