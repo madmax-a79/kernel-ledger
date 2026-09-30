@@ -309,6 +309,12 @@
       "version": "1.5",
       "date": "2026-09-28",
       "summary": "Kernel may also earn by delivering digital work to other AI agents and their operators on agent marketplaces; earned and traded value reported separately; walls unchanged."
+    },
+    {
+      "version": "1.6",
+      "date": "2026-09-29",
+      "summary": "Kernel may read public sites in a browser at human pace, including Craigslist within stated limits; eBay stays API-only; the operator accepts the stated risk.",
+      "auditor": "Adopted with the auditor's objection noted: the Craigslist terms risk is the operator's to accept; the limits and the stop-on-block rule are the auditor's conditions."
     }
   ],
   "audits": [
