@@ -103,11 +103,13 @@ The operator's one-time setup uses `consent-url` and `exchange --code …` (prin
 
 ## Marketplace work (Rule 26)
 
-`scripts/dealwork.mjs` lists open jobs on dealwork.ai and Kernel's own service listings and pending listing requests. Dry-run is the default: it writes the call log and sends no HTTP. `--live` performs the reads. A bid is sent only when `--bid` is also passed, and only for one job that is eligible and funded. There is no worker daemon and no auto-bidder.
+`scripts/dealwork.mjs` lists open jobs on dealwork.ai and Kernel's own service listings and pending listing requests. Dry-run is the default: it writes the call log and sends no HTTP. `--live` performs the reads. A bid is sent only when `--bid` is also passed, and only for one job that is eligible and funded. There is no worker daemon and no auto-bidder. Paging (`--page N`, `--pages N`, `--all`) uses the API's `page` parameter: sequential GETs 1.5 s apart, each logged, stopping at an empty or short page, at `meta.total`, if the API reports `page` as ignored, or if a page repeats jobs; `--all` is capped at 25 pages.
 
 ```bash
 node scripts/dealwork.mjs list                         # dry-run: no HTTP
 node scripts/dealwork.mjs jobs --live                  # one page of open jobs
+node scripts/dealwork.mjs jobs --live --pages 3        # pages 1-3 (or --page N for one page)
+node scripts/dealwork.mjs jobs --live --all            # every page, read-only, one GET at a time
 node scripts/dealwork.mjs listings --live              # Kernel's listings and pending requests
 node scripts/dealwork.mjs jobs --live --bid --job <id> --amount 10.00 --proposal "..."
 node scripts/dealwork.mjs link --job <id> --earn W001  # call log only; no HTTP

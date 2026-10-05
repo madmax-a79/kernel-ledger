@@ -3,6 +3,9 @@
 //
 //   node scripts/dealwork.mjs list                              dry-run: no HTTP
 //   node scripts/dealwork.mjs jobs --live                       open jobs (one page)
+//   node scripts/dealwork.mjs jobs --live --page 3              open jobs, page 3 only
+//   node scripts/dealwork.mjs jobs --live --pages 4             open jobs, pages 1 to 4
+//   node scripts/dealwork.mjs jobs --live --all                 every page of open jobs (capped at MAX_PAGES)
 //   node scripts/dealwork.mjs listings --live                   Kernel's listings and pending listing requests
 //   node scripts/dealwork.mjs list --live                       all three reads
 //   node scripts/dealwork.mjs jobs --live --bid --job <id> --amount 10.00 --proposal "..."
@@ -16,6 +19,11 @@
 // blocked). The known failure is budgetMax < fixedPrice * maxConcurrent (the API calls that "underfunded").
 // Bid-mode jobs have no fixedPrice and maxConcurrent, so this script cannot show they are funded and will not
 // bid on them.
+//
+// Paging is read-only: one GET per page, sent one after another with PAGE_DELAY_MS between them, using the
+// API's page parameter (skill.md "Pagination": page, per_page). It stops at the first empty or short page,
+// when meta.total is reached, when the API reports page as an ignored parameter, or when a page repeats ids
+// already seen. --all is capped at MAX_PAGES. Paging never bids; --bid still checks only the jobs it read.
 //
 // Every marketplace HTTP call is appended to WORK_CALL_LOG before it is sent, and again with its outcome. The
 // log is the hash chain scripts/earncheck.mjs already checks. A funded job is logged as
@@ -44,6 +52,10 @@ const ORIGIN = 'https://dealwork.ai';
 const PLATFORM_CURRENCY = 'USD';
 const GENESIS = '0'.repeat(64);
 const PAGE = '/api/v1/jobs?per_page=20&sort=newest';
+const PER_PAGE = 20;
+const MAX_PAGES = 25;
+const PAGE_DELAY_MS = 1500;
+const pageEndpoint = (n) => (n === 1 ? PAGE : `${PAGE}&page=${n}`);
 const LISTINGS = '/api/v1/listings/mine';
 const REQUESTS = '/api/v1/listings/requests/pending';
 // Rule 26, in the constitution's words. The same five strings as scripts/earncheck.mjs.
@@ -82,7 +94,7 @@ const KIND_PATTERNS = [
 // C$25. Only an explicit CAD price at or below this is deliver-without-review. This script never delivers.
 const REVIEW_UNITS = 25 * 10000;
 const PRIVATE = 'Dealwork responses are for Kernel and the Controller only. Never commit this output, and never write client identity into the call log or the repo.';
-const USAGE = 'usage: node scripts/dealwork.mjs [list|jobs|listings|link] [--live] [--bid --job <id> --amount <n> --proposal "..."] [--job <id> --earn <id>]';
+const USAGE = 'usage: node scripts/dealwork.mjs [list|jobs|listings|link] [--live] [--page <n> | --pages <n> | --all] [--bid --job <id> --amount <n> --proposal "..."] [--job <id> --earn <id>]';
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 const EARN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 
@@ -99,11 +111,12 @@ function parseArgs(argv) {
     rest = argv.slice(1);
   }
   const opts = { live: false, bid: false };
-  const valued = new Set(['job', 'amount', 'proposal', 'hours', 'earn']);
+  const valued = new Set(['job', 'amount', 'proposal', 'hours', 'earn', 'page', 'pages']);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--live') { if (opts.live) fail('--live given twice'); opts.live = true; continue; }
     if (a === '--dry-run') { if (opts.dryRun) fail('--dry-run given twice'); opts.dryRun = true; continue; }
+    if (a === '--all') { if (opts.all) fail('--all given twice'); opts.all = true; continue; }
     if (a === '--bid') { if (opts.bid) fail('--bid given twice'); opts.bid = true; continue; }
     const m = /^--([a-z]+)$/.exec(String(a));
     if (!m || !valued.has(m[1]) || rest[i + 1] == null || String(rest[i + 1]).startsWith('--')) fail(`${USAGE}\nunknown or incomplete flag ${a}`);
@@ -111,6 +124,13 @@ function parseArgs(argv) {
     opts[m[1]] = rest[++i];
   }
   if (opts.dryRun && opts.live) fail('pass either --live or --dry-run, not both');
+  if ([opts.all, opts.page != null, opts.pages != null].filter(Boolean).length > 1) fail('pass only one of --page, --pages and --all');
+  for (const k of ['page', 'pages']) {
+    if (opts[k] == null) continue;
+    if (!/^\d{1,3}$/.test(String(opts[k])) || Number(opts[k]) < 1 || Number(opts[k]) > MAX_PAGES) fail(`--${k} must be a whole number from 1 to ${MAX_PAGES}`);
+    opts[k] = Number(opts[k]);
+  }
+  if ((opts.all || opts.page != null || opts.pages != null) && (cmd === 'listings' || cmd === 'link')) fail('--page, --pages and --all only apply to jobs and list');
   if (!opts.live) opts.dryRun = true;
   if (cmd === 'link') {
     if (opts.bid || opts.live) fail('link only writes the call log; it does not call the marketplace');
@@ -369,18 +389,48 @@ function publicJob(job, view) {
   };
 }
 
-async function readJobs(ctx) {
+// Which pages to read: --page n reads only page n; --pages n reads 1..n; --all reads until done (MAX_PAGES cap).
+export function pagePlan(opts = {}) {
+  if (opts.page != null) return { first: opts.page, last: opts.page };
+  if (opts.pages != null) return { first: 1, last: opts.pages };
+  if (opts.all) return { first: 1, last: MAX_PAGES };
+  return { first: 1, last: 1 };
+}
+
+async function readJobs(ctx, opts = {}) {
   ctx.action = 'jobs';
-  const body = await send(ctx, 'GET', PAGE);
-  const rows = Array.isArray(body?.data) ? body.data : fail('jobs response has no data array');
+  const { first, last } = pagePlan(opts);
   const jobs = [];
-  for (const job of rows) {
-    if (!job || typeof job !== 'object') continue;
-    const view = viewJob(job);
-    logJob(ctx, view);
-    jobs.push(publicJob(job, view));
+  const seen = new Set();
+  let total = null;
+  let pagesRead = 0;
+  let stopped = null;
+  for (let n = first; n <= last; n++) {
+    if (n > first) sleep(PAGE_DELAY_MS);
+    const body = await send(ctx, 'GET', pageEndpoint(n));
+    const rows = Array.isArray(body?.data) ? body.data : fail('jobs response has no data array');
+    pagesRead++;
+    if (Number.isInteger(body?.meta?.total)) total = body.meta.total;
+    const ignored = Array.isArray(body?.meta?.ignored_params) ? body.meta.ignored_params.map(String) : [];
+    if (n > 1 && ignored.includes('page')) { stopped = 'the API ignored the page parameter'; break; }
+    if (n > 1 && Number.isInteger(body?.meta?.page) && body.meta.page !== n) { stopped = `asked for page ${n}, the API answered page ${body.meta.page}`; break; }
+    let fresh = 0;
+    for (const job of rows) {
+      if (!job || typeof job !== 'object') continue;
+      const view = viewJob(job);
+      if (view.job && seen.has(view.job)) continue;
+      if (view.job) seen.add(view.job);
+      fresh++;
+      logJob(ctx, view);
+      jobs.push(publicJob(job, view));
+    }
+    if (rows.length === 0) { stopped = 'empty page'; break; }
+    if (n > first && fresh === 0) { stopped = 'page repeated jobs already seen'; break; }
+    if (rows.length < PER_PAGE) { stopped = 'short page (last page)'; break; }
+    if (total != null && n * PER_PAGE >= total) { stopped = 'meta.total reached'; break; }
   }
-  return { total: body?.meta?.total ?? null, page: body?.meta?.page ?? null, jobs };
+  if (!stopped && opts.all && last === MAX_PAGES) stopped = `MAX_PAGES (${MAX_PAGES}) reached`;
+  return { total, pages_read: pagesRead, first_page: first, stopped: stopped || 'requested pages read', seen: jobs.length, jobs };
 }
 
 function publicListing(row) {
@@ -429,8 +479,8 @@ async function placeBid(ctx, opts, jobs) {
   const found = jobs.find((j) => j.job === opts.job);
   const job = found || null;
   if (!bidAllowed({ bid: true, live: ctx.live, eligible: job?.eligible === true, funded: job?.funded === true })) {
-    record(ctx, { event: 'refused', action: 'bid', endpoint: `POST /api/v1/jobs/${opts.job}/bids`, method: 'POST', job: opts.job, outcome: 'refused', reason: !job ? 'job not on this page' : job.funded ? (job.refusal || 'not eligible') : (job.funded_reason || 'not funded') });
-    return { bid: 'refused', reason: !job ? 'job not on this page' : job.funded ? (job.refusal || 'not eligible') : (job.funded_reason || 'not funded') };
+    record(ctx, { event: 'refused', action: 'bid', endpoint: `POST /api/v1/jobs/${opts.job}/bids`, method: 'POST', job: opts.job, outcome: 'refused', reason: !job ? 'job not on the pages read' : job.funded ? (job.refusal || 'not eligible') : (job.funded_reason || 'not funded') });
+    return { bid: 'refused', reason: !job ? 'job not on the pages read' : job.funded ? (job.refusal || 'not eligible') : (job.funded_reason || 'not funded') };
   }
   const amount = opts.amount;
   if (!/^\d{1,6}(\.\d{1,2})?$/.test(String(amount)) || !(Number(amount) > 0)) fail('--amount must be an amount like 10.00');
@@ -473,7 +523,10 @@ function linkEarn(ctx, opts) {
 
 function dryRun(ctx, cmd, opts) {
   const endpoints = [];
-  if (cmd === 'jobs' || cmd === 'list') endpoints.push(`GET ${PAGE}`);
+  if (cmd === 'jobs' || cmd === 'list') {
+    const { first, last } = pagePlan(opts);
+    for (let n = first; n <= last; n++) endpoints.push(`GET ${pageEndpoint(n)}`);
+  }
   if (cmd === 'listings' || cmd === 'list') endpoints.push(`GET ${LISTINGS}`, `GET ${REQUESTS}`);
   for (const endpoint of endpoints) record(ctx, { event: 'dry-run', action: cmd, endpoint, method: 'GET', outcome: 'not-sent' });
   if (opts.bid) record(ctx, { event: 'refused', action: 'bid', endpoint: `POST /api/v1/jobs/${opts.job}/bids`, method: 'POST', job: opts.job, outcome: 'refused', reason: 'dry-run does not bid' });
@@ -500,7 +553,7 @@ async function main(argv) {
   ctx.apiKey = creds.apiKey;
   ctx.secrets = creds.secrets;
   const out = { mode: 'live' };
-  if (cmd === 'jobs' || cmd === 'list') Object.assign(out, await readJobs(ctx));
+  if (cmd === 'jobs' || cmd === 'list') Object.assign(out, await readJobs(ctx, opts));
   if (cmd === 'listings' || cmd === 'list') Object.assign(out, await readListings(ctx));
   if (opts.bid) {
     if (cmd === 'listings') fail('--bid is only checked against open jobs; run jobs --live --bid');
