@@ -101,6 +101,24 @@ Environment, from the bots' secret store:
 
 The operator's one-time setup uses `consent-url` and `exchange --code …` (prints the refresh token; nothing is saved), which need `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` and `EBAY_RUNAME`, then `location`, which runs like the bots' commands, with the secret-store values above. The script needs Node.js 20 or later and no packages.
 
+## Marketplace work (Rule 26)
+
+`scripts/dealwork.mjs` lists open jobs on dealwork.ai and Kernel's own service listings and pending listing requests. Dry-run is the default: it writes the call log and sends no HTTP. `--live` performs the reads. A bid is sent only when `--bid` is also passed, and only for one job that is eligible and funded. There is no worker daemon and no auto-bidder.
+
+```bash
+node scripts/dealwork.mjs list                         # dry-run: no HTTP
+node scripts/dealwork.mjs jobs --live                  # one page of open jobs
+node scripts/dealwork.mjs listings --live              # Kernel's listings and pending requests
+node scripts/dealwork.mjs jobs --live --bid --job <id> --amount 10.00 --proposal "..."
+node scripts/dealwork.mjs link --job <id> --earn W001  # call log only; no HTTP
+```
+
+A job is funded only when escrow can cover every slot: `budgetMax` >= `fixedPrice` × `maxConcurrent`, `posterFunded` is true, and the job is not claim-blocked. The failure already seen is `budgetMax` < `fixedPrice` × `maxConcurrent` (dealwork calls that `underfunded`). Bid-mode jobs have no `fixedPrice` and `maxConcurrent`, so this script will not bid on them. Rule 26's filter is hardcoded: the five eligible kinds, and refusals for licensed advice (legal, tax, medical, financial), academic assignments, reviews or testimonials, impersonation, adult content, ongoing support, illegal work, crypto or tokens, scrapers, lead-gen, and anything that requires paying to obtain work. The script never pays to obtain work, never delivers, and never writes client identity into the call log.
+
+Every marketplace HTTP call is appended to `WORK_CALL_LOG` (a path outside this repo; the same hash chain as the eBay call log) before it is sent, and again with the outcome. A funded job is logged as `{"marketplace":"dealwork.ai","job":"…","price":"40.00 USD","escrow":"funded"}`. `link` appends `{"marketplace":"dealwork.ai","job":"…","earn":"W001"}` only when a funded line for that job is already there and the filter marked the job eligible. Dealwork job amounts have no currency field; the platform wallet is USD, so a USD price is what the log records. A deliverable priced in CAD at or below C$25 is marked `deliver-without-review`. Any other price, including every USD price, is `needs-jay-review`. Nothing is delivered.
+
+It reads `baseUrl` and `apiKey` from `~/.openwork/credentials.json` (`baseUrl` must be `https://dealwork.ai`). `DEALWORK_BASE_URL` may only name a local test server. The script needs Node.js 20 or later and no packages.
+
 ## Checking earn lines (Controller)
 
 `node scripts/earncheck.mjs` is the Controller's read-only check of every `earn` line (Rule 26). It writes nothing and never calls a marketplace. For each line in the published ledger (main on GitHub; `--ledger ledger.json` checks a local file), it flags:
@@ -113,14 +131,14 @@ The operator's one-time setup uses `consent-url` and `exchange --code …` (prin
 - a client, customer or buyer field at any depth;
 - no id, or no marketplace record before it.
 
-The marketplace record comes from the marketplace call log (`WORK_CALL_LOG`, or `--calllog`, the same hash chain as the eBay call log).
+The marketplace record comes from the marketplace call log (`WORK_CALL_LOG`, or `--calllog`, the same hash chain as the eBay call log). `scripts/dealwork.mjs` writes those lines.
 
 - Exactly one of its lines links the earn line to a job: `{"marketplace": "…", "job": "…", "earn": "W001"}`.
 - That job backs no other earn line.
 - The same line or an earlier one records the job's agreed price and funded escrow: `{"marketplace": "…", "job": "…", "price": "40.00 USD", "escrow": "funded"}`.
 - `marketplace` equals the earn line's, and both lines are dated (`at`) on or before the earn line's date.
 
-Until the marketplace scripts write these lines, every earn line is flagged.
+Until those lines are in the call log, every earn line is flagged.
 
 Every receipt that exists, files in the repo and links alike, is listed under `open`, because only a person or model looking at it can confirm the client's identity is covered. The check ends with the weekly pack's figures: Challenge Value, Traded and Earned, computed by the page's own code from this clone's `index.html`, so pull first. It exits with 0 when nothing is flagged, 1 when something is, and 2 when it couldn't check, for example because GitHub or the Bank of Canada didn't answer.
 
