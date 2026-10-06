@@ -280,6 +280,15 @@
       "kind": "breach",
       "detail": "Operator misrouted a Controller instruction to Kernel. Kernel appended check C001 (fdff359) as kernel-agent; the guard correctly flagged it. C001 stands but is Kernel-authored, not an independent check. The Controller verified F001 separately in chat with the same result and will append its own check from its own identity. Root cause: both bots shared one GitHub identity; fixed below.",
       "acknowledges": "fdff35981c1aee5d6d35e79ea1998f4192c78a5a"
+    },
+    {
+      "date": "2026-10-06",
+      "kind": "breach",
+      "detail": "kernel-agent pushed scripts/dealwork.mjs and README.md changes; Kernel's account may only append to ledger.json and add receipts.",
+      "acknowledges": [
+        "f9589749ab2efef60e7d19db9c989d097be12cc8",
+        "56f191e110e7eb39e325e1d56358e3710e09180c"
+      ]
     }
   ],
   "manipulation": [],
