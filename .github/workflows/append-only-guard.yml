@@ -59,7 +59,10 @@ jobs:
           const env = process.env;
           const problemsFound = []; // { commit, text }: commit is the full id the problem belongs to, or null
           const notes = [];
-          const flag = (commit, text) => { if (!problemsFound.some((p) => p.text === text)) problemsFound.push({ commit, text }); };
+          // Positions in interventions of lines a bot account appended; they never acknowledge anything.
+          const botInterventions = new Set();
+          // One entry per commit and text: a commit whose short id matches another's still gets its own entry.
+          const flag = (commit, text) => { if (!problemsFound.some((p) => p.commit === commit && p.text === text)) problemsFound.push({ commit, text }); };
 
           // ---- Ledger rules. The same block is in scripts/append.mjs and in the append-only guard
           // ---- (.github/workflows/append-only-guard.yml); change both together.
@@ -274,6 +277,7 @@ jobs:
               const target = Number.isInteger(obj.retracts) ? ledger[array][obj.retracts] : undefined;
               if (!isObject(target) || target.retracts != null) say(`"retracts" must be the position (0 = first) of an existing ${array} line`);
               else if (items.some((x) => x.retracts === obj.retracts)) say(`${array}[${obj.retracts}] is already retracted`);
+              if (obj.acknowledges != null) say('a retraction acknowledges nothing; record a breach in its own line');
             } else {
               LOG_FIELDS[array].forEach(need);
               // A retracted line no longer holds its week or version.
@@ -283,7 +287,12 @@ jobs:
               if (array === 'amendments' && standing.some((x) => String(x.version) === String(obj.version))) say(`amendment v${obj.version} already exists`);
               if (array === 'audits' && obj.week != null && !(Number.isInteger(obj.week) && obj.week >= 0)) say('"week" must be a whole number');
               else if (array === 'audits' && obj.week != null && standing.some((x) => x.week === obj.week)) say(`the audit note for week ${obj.week} already exists`);
-              if (array === 'interventions' && obj.acknowledges != null && !(typeof obj.acknowledges === 'string' && /^[0-9a-f]{40}$/.test(obj.acknowledges))) say('"acknowledges" is the full 40-character id of the commit that broke the rules');
+              // One commit id, or a list of them when one breach spans several commits.
+              if (array === 'interventions' && obj.acknowledges != null) {
+                const ids = Array.isArray(obj.acknowledges) ? obj.acknowledges : [obj.acknowledges];
+                if (!ids.length || !ids.every((c) => typeof c === 'string' && /^[0-9a-f]{40}$/.test(c))) say('"acknowledges" is the full 40-character id of the commit that broke the rules, or a list of such ids');
+                else if (new Set(ids).size !== ids.length) say('"acknowledges" lists the same commit twice');
+              }
               if (items.some((x) => same(x, obj))) say(`this exact line is already in ${array}`);
             }
             if (array !== 'entries' && obj.id != null && items.some((x) => x.id === obj.id)) say(`${array} already has id ${JSON.stringify(obj.id)}`);
@@ -411,6 +420,7 @@ jobs:
                   else if (k === 'entries' && isObject(o) && role === 'controller' && o.type !== 'check') flag(c, `${short(c)}: ${who} may append only Controller checks, not a ${JSON.stringify(String(o.type))} line (${label(o)})`);
                   if (isObject(o) && o.retracts != null) flag(c, `${short(c)}: ${who} may not retract lines`);
                 }
+                if (role && k === 'interventions') botInterventions.add(soFar[k].length);
                 soFar[k].push(o);
               }
             }
@@ -527,9 +537,13 @@ jobs:
             }
 
             // Problems in a commit the operator has acknowledged in an intervention line stay on record here
-            // as notes instead of failing every run.
+            // as notes instead of failing every run. Only standing lines count: not a retracted line, not a
+            // retraction, and not a line a bot account appended.
             const head = load(after);
-            const acknowledged = new Set((head.data?.interventions || []).filter(isObject).map((x) => x.acknowledges).filter(Boolean));
+            const ivs = head.data?.interventions || [];
+            const retractedIv = new Set(ivs.filter(isObject).map((x) => x.retracts).filter(Number.isInteger));
+            const acknowledged = new Set(ivs.flatMap((x, i) => (isObject(x) && x.retracts == null && !retractedIv.has(i) && !botInterventions.has(i) ? [].concat(x.acknowledges) : []))
+              .filter((c) => typeof c === 'string' && /^[0-9a-f]{40}$/.test(c)));
             for (const p of problemsFound.filter((x) => x.commit && acknowledged.has(x.commit))) {
               notes.push(`Acknowledged in the interventions log: ${p.text}`);
               problemsFound.splice(problemsFound.indexOf(p), 1);

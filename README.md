@@ -49,7 +49,7 @@ A log line (intervention, manipulation attempt, amendment, audit note) that shou
 
 The page computes running totals in the order lines were appended, so a new line never changes the figures already shown on earlier ones, except a Controller check, which changes how the line it checks (and everything after it) is counted.
 
-If a commit ever breaks the rules, the history cannot be repaired, so the guard keeps failing until the operator records the breach in public: append to `interventions` (with `--operator`) `{"date": "…", "kind": "breach", "detail": "what happened", "acknowledges": "<full commit id>"}`. The guard then reports that commit's problems as acknowledged instead of failing.
+If a commit ever breaks the rules, the history cannot be repaired, so the guard keeps failing until the operator records the breach in public: append to `interventions` (with `--operator`) `{"date": "…", "kind": "breach", "detail": "what happened", "acknowledges": "<full commit id>"}`; when one breach spans several commits, `acknowledges` lists their full ids: `["<id>", "<id>"]`. The guard then reports those commits' problems as acknowledged instead of failing. Only a standing operator line acknowledges: not a retracted line, not a retraction, and not a line a bot appended. `append.mjs` refuses an id that isn't a commit on main.
 
 Selling a lot in parts: record each piece as its own buy, or, after selling part of a lot, record the rest as a new buy with `net_usd` 0 and its own `est_value_usd`. A sell closes one buy completely.
 

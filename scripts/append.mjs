@@ -245,6 +245,7 @@ function problems(array, obj, ledger, latestDate) {
     const target = Number.isInteger(obj.retracts) ? ledger[array][obj.retracts] : undefined;
     if (!isObject(target) || target.retracts != null) say(`"retracts" must be the position (0 = first) of an existing ${array} line`);
     else if (items.some((x) => x.retracts === obj.retracts)) say(`${array}[${obj.retracts}] is already retracted`);
+    if (obj.acknowledges != null) say('a retraction acknowledges nothing; record a breach in its own line');
   } else {
     LOG_FIELDS[array].forEach(need);
     // A retracted line no longer holds its week or version.
@@ -254,7 +255,12 @@ function problems(array, obj, ledger, latestDate) {
     if (array === 'amendments' && standing.some((x) => String(x.version) === String(obj.version))) say(`amendment v${obj.version} already exists`);
     if (array === 'audits' && obj.week != null && !(Number.isInteger(obj.week) && obj.week >= 0)) say('"week" must be a whole number');
     else if (array === 'audits' && obj.week != null && standing.some((x) => x.week === obj.week)) say(`the audit note for week ${obj.week} already exists`);
-    if (array === 'interventions' && obj.acknowledges != null && !(typeof obj.acknowledges === 'string' && /^[0-9a-f]{40}$/.test(obj.acknowledges))) say('"acknowledges" is the full 40-character id of the commit that broke the rules');
+    // One commit id, or a list of them when one breach spans several commits.
+    if (array === 'interventions' && obj.acknowledges != null) {
+      const ids = Array.isArray(obj.acknowledges) ? obj.acknowledges : [obj.acknowledges];
+      if (!ids.length || !ids.every((c) => typeof c === 'string' && /^[0-9a-f]{40}$/.test(c))) say('"acknowledges" is the full 40-character id of the commit that broke the rules, or a list of such ids');
+      else if (new Set(ids).size !== ids.length) say('"acknowledges" lists the same commit twice');
+    }
     if (items.some((x) => same(x, obj))) say(`this exact line is already in ${array}`);
   }
   if (array !== 'entries' && obj.id != null && items.some((x) => x.id === obj.id)) say(`${array} already has id ${JSON.stringify(obj.id)}`);
@@ -307,6 +313,11 @@ function gitRaw(...args) {
 }
 const git = (...args) => gitRaw(...args).toString('utf8');
 const gitOk = (...args) => { try { gitRaw(...args); return true; } catch { return false; } };
+// A breach line may acknowledge only commits that are on main: a mistyped or rebased-away id would acknowledge nothing
+// and could only be retracted.
+const ackProblems = (array, obj, ref) => (array !== 'interventions' || obj.acknowledges == null ? [] : [].concat(obj.acknowledges)
+  .filter((c) => typeof c === 'string' && /^[0-9a-f]{40}$/.test(c) && !(gitOk('cat-file', '-e', `${c}^{commit}`) && gitOk('merge-base', '--is-ancestor', c, ref)))
+  .map((c) => `"acknowledges" ${c} is not a commit on ${ref === 'HEAD' ? 'main' : ref}`));
 const hashOf = (bytes) => execFileSync('git', ['hash-object', '--no-filters', '--stdin'], { cwd: root, input: bytes }).toString().trim();
 
 function decode(buf, where) {
@@ -458,7 +469,7 @@ function main(argv) {
     for (const k of ARRAYS) if (!Array.isArray(ledger[k])) fail(`${FILE} has no "${k}" array`);
     if (ledger[array].some((x) => same(x, obj))) { console.log(`Already on ${where}: this exact line was appended earlier. Nothing to do.`); return; }
     const receipts = receiptFiles(obj);
-    const found = [...problems(array, obj, ledger, vancouverDate(0)), ...receipts.problems];
+    const found = [...problems(array, obj, ledger, vancouverDate(0)), ...receipts.problems, ...ackProblems(array, obj, where === 'origin/main' ? 'origin/main' : 'HEAD')];
     if (found.length) fail(`would not append to ${array}:\n  - ${found.join('\n  - ')}`);
     build(src, ledger, array, obj);
     console.log(`OK (dry run against ${where}) — would append to ${array} and commit:\n  ${message(array, obj)}`);
@@ -529,7 +540,7 @@ function appendLocked(array, obj) {
 
     if (ledger[array].some((x) => same(x, obj))) { console.log('Already on main: this exact line was appended earlier. Nothing to do.'); return; }
     const receipts = receiptFiles(obj);
-    const found = [...problems(array, obj, ledger, vancouverDate(0)), ...receipts.problems];
+    const found = [...problems(array, obj, ledger, vancouverDate(0)), ...receipts.problems, ...ackProblems(array, obj, 'HEAD')];
     if (found.length) fail(`not appended to ${array}:\n  - ${found.join('\n  - ')}`);
     const next = build(src, ledger, array, obj);
     const msg = message(array, obj);
