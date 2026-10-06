@@ -132,6 +132,7 @@
   .status { font-size: 0.8rem; text-align: right; }
   .status.verified { color: var(--credit); }
   .status.flagged { color: var(--debit); }
+  .status.superseded { color: var(--muted); }
   .status.pending { color: var(--muted); }
   .body { padding: 4px 0 18px 68px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 32px; font-size: 0.95rem; }
   .body h3 { margin: 0 0 4px; font-size: 0.8rem; font-weight: 600; color: var(--muted); }
@@ -373,7 +374,35 @@
       points.push({ date: e.date, value, cash });
     }
     const heldValue = [...held.values()].reduce((s, h) => s + h.est, 0);
-    return { meta, entries, lines, checks, current, cash, held, heldValue, value: cash + heldValue, earned, traded: cash + heldValue - earned, points, trades, deaths, hoursTotal, kmTotal };
+
+    // Amendment 7: a flagged line with a later correction that a check verified is shown as superseded, not flagged.
+    // A later correction is one appended after the check that currently flags the line, correcting the same line:
+    // the line itself or, for a correction, the line it corrects, through any chain of corrections. A correction
+    // verified before the flag can't have answered it. Display only: the figures above stay as flagged.
+    const byId = new Map();
+    entries.forEach((e) => { const k = String(e.id).toLowerCase(); if (e.type !== 'check' && e.id != null && !byId.has(k)) byId.set(k, e); });
+    const rootOf = (e) => {
+      const seen = new Set();
+      let x = e;
+      while (x.type === 'correction' && x.corrects != null && !seen.has(x)) {
+        seen.add(x);
+        const up = byId.get(String(x.corrects).toLowerCase());
+        if (!up) return String(x.corrects).toLowerCase();
+        x = up;
+      }
+      return x.id == null ? null : String(x.id).toLowerCase();
+    };
+    const roots = entries.map((e) => e.type === 'check' ? null : rootOf(e));
+    const superseded = new Map(); // flagged line's id -> the latest later correction a check verified
+    entries.forEach((e, i) => {
+      if (roots[i] === null || (current(e.id) || {}).status !== 'flagged') return;
+      const after = Math.max(i, entries.indexOf(current(e.id)));
+      for (let j = entries.length - 1; j > after; j--) {
+        const y = entries[j];
+        if (y.type === 'correction' && roots[j] === roots[i] && (current(y.id) || {}).status === 'verified') { superseded.set(e.id, y); break; }
+      }
+    });
+    return { meta, entries, lines, checks, current, superseded, cash, held, heldValue, value: cash + heldValue, earned, traded: cash + heldValue - earned, points, trades, deaths, hoursTotal, kmTotal };
   }
 
   // Lines of a log that are neither retractions nor retracted.
@@ -476,7 +505,8 @@
       const kindName = { buy: 'Bought', sell: 'Sold', pass: 'Passed', correction: 'Correction', death: 'Ledger hit $0', reload: 'New life', note: 'Note', earn: 'Earned' };
       rows.innerHTML = visible.map(({ e, cash, value, flagged, uncounted }) => {
         const chk = s.current(e.id);
-        const st = chk ? chk.status : 'pending';
+        const by = flagged ? s.superseded.get(e.id) : null;
+        const st = by ? 'superseded' : chk ? chk.status : 'pending';
         const stTxt = String(st);
         const memo = e.memo || {};
         const memoHtml = ['what', 'why', 'solds', 'risk', 'exit'].filter((k) => memo[k]).map((k) => '<p><b>' + k.toUpperCase() + '</b> ' + esc(memo[k]) + '</p>').join('');
@@ -513,7 +543,8 @@
         if (e.corrects) meta.push('corrects ' + esc(e.corrects));
         const all = s.checks.get(e.id) || [];
         const ctrl = all.map((c, n) => '<p class="meta">Controller ' + esc(c.date || '') + ', ' + esc(c.status) + (all.length > 1 && n === all.length - 1 ? ' (current)' : '') + ': ' + esc(c.note || '') + '</p>').join('')
-          + (flagged ? '<p class="meta">While flagged, its costs count toward Challenge Value and its gains and estimates do not.</p>' : '');
+          + (by ? '<p class="meta">Superseded by ' + esc(by.id) + ', a later correction that check ' + esc((s.current(by.id) || {}).id || '') + ' verified. This line still counts as flagged: its costs count toward Challenge Value and its gains and estimates do not.</p>'
+            : flagged ? '<p class="meta">While flagged, its costs count toward Challenge Value and its gains and estimates do not.</p>' : '');
         return '<details class="row' + (uncounted ? ' uncounted' : '') + '" data-type="' + esc(e.type) + '" id="line-' + esc(e.id) + '">'
           + '<summary>'
           + '<span class="num">' + esc(e.trade ? '#' + e.trade : '') + '</span>'
