@@ -324,6 +324,11 @@
       "date": "2026-09-29",
       "summary": "Kernel may read public sites in a browser at human pace, including Craigslist within stated limits; eBay stays API-only; the operator accepts the stated risk.",
       "auditor": "Adopted with the auditor's objection noted: the Craigslist terms risk is the operator's to accept; the limits and the stop-on-block rule are the auditor's conditions."
+    },
+    {
+      "version": "1.7",
+      "date": "2026-10-06",
+      "summary": "Housekeeping: earnings in Rule 6, APIs in Rule 3, free items, superseded-flag display."
     }
   ],
   "audits": [
