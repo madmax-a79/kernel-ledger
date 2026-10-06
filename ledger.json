@@ -323,6 +323,12 @@
       "date": "2026-09-26",
       "by": "Claude (external auditor)",
       "note": "Day 0 check. The Craigslist listing behind Kernel\u2019s first shortlist is real: East Vancouver, posted 2026-09-13, items and prices as Kernel reported. Kernel\u2019s used-comp range for LEGO 70779 (US$13\u201325) is consistent with an independent source (BrickEconomy: used copies US$15\u201322). Sold-listing links were not attached to the scan; Rule 13 requires three before the Trade #1 memo counts."
+    },
+    {
+      "week": 2,
+      "date": "2026-10-04",
+      "by": "Claude (external auditor)",
+      "note": "Week 2. Challenge Value US$15.98, verified (cash 6.47 + held 9.51). The week's entire movement is held-value re-marking on E001 through three corrections; no cash moved, no trades, no sales, no new operator hours. Amendments 4-6 adopted, the last over the auditor's objection, recorded. Open items: operator hours double-counted (N003/N005), Kernel's section 9 cites a withdrawn rule (SPEC) and misreads Rule 13 on price changes; the marketplace scripts were not yet in the repo at pack time. Earned: US$0."
     }
   ]
 }
