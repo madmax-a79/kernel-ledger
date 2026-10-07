@@ -6,10 +6,27 @@ name: append-only guard
 # scripts/append.mjs). Every commit since the last one a finished run of this guard checked is
 # covered, so pushes whose run was skipped or cancelled are caught by the next run or the daily one.
 #
-# Pushes by the bot accounts, as recorded in GitHub's push log, are held to more. KERNEL_ACTORS
-# (Kernel) may append entries of any type except Controller checks; CONTROLLER_ACTORS (the
-# Controller) may append only Controller checks; both may append manipulation attempts and add new
-# receipt photos or PDFs, and neither may touch meta or any other file.
+# The bot accounts are held to more: commits they push, as recorded in GitHub's push log, and
+# commits they wrote (their git author or committer identity) whoever pushed them, each account to
+# its own rules. KERNEL_ACTORS (Kernel) may append entries of any type except Controller checks;
+# CONTROLLER_ACTORS (the Controller) may append only Controller checks; both may append manipulation
+# attempts and add new receipt photos or PDFs, and neither may touch meta or any other file.
+#
+# Only main may exist. Every run of the guard fails while the repo has any other branch or tag, until
+# it is deleted; the "bots push only to main" job also fails at once when a bot pushes one, but GitHub
+# starts no run for some pushes (over three tags at once, or a ref whose commit carries an older
+# workflow), so the guard's own check is the one that holds.
+#
+# In every run except a manual re-check (any push to main, the operator's too, and the daily run),
+# the guard also puts back any file outside ledger.json and new receipts that a bot added, changed or
+# deleted in commits it pushed itself, as the file was before the bot's first change to it, in a
+# commit of its own as github-actions[bot]. A new receipt whose name differs only in case from
+# another is removed too. It skips commits the operator has acknowledged (only lines a commit with no
+# bot account appended acknowledge), and any file someone other than the guard, or the same bot in
+# that run of commits, changed after the bot did (the operator sorts that out); it never touches
+# ledger.json, and puts nothing back when it can't see every commit since the last passing run or who
+# pushed each. A bot-written commit someone else pushed is flagged, not put back. The run still fails
+# until the operator acknowledges the breach.
 #
 # The check is inline, not a script in the repo: GitHub refuses pushes that touch
 # .github/workflows/ from a token without the "workflow" scope, so neither bot can weaken it.
@@ -17,7 +34,8 @@ name: append-only guard
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
+    tags: ['**']
   schedule:
     - cron: '17 9 * * *' # daily, for pushes whose run never happened
   workflow_dispatch: # re-check the whole history from the first commit
@@ -27,9 +45,41 @@ permissions:
   actions: read
 
 jobs:
+  refs:
+    name: bots push only to main
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check who pushed
+        env:
+          ACTOR: ${{ github.actor }}
+          REF: ${{ github.ref }}
+          BOTS: kernel-agent kernel-controller
+        run: |
+          node --input-type=module <<'JS'
+          const { ACTOR = '', REF = '', BOTS = '' } = process.env;
+          const bot = BOTS.split(/[\s,]+/).filter(Boolean).map((a) => a.toLowerCase()).includes(ACTOR.toLowerCase());
+          const ref = JSON.stringify(REF.replace(/[\r\n]/g, ''));
+          if (bot) {
+            console.log(`::error title=bots push only to main::${ACTOR} pushed ${ref}; the bot accounts may push only to main`);
+            process.exit(1);
+          }
+          console.log(`${ref} was pushed by an account other than the bots; nothing to check.`);
+          JS
+
   guard:
     name: ledger.json is append-only
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Writes only to put back files a bot changed (see the top). Push and daily runs go one at a time, so restores
+    # can't race; manual re-checks never write and have their own group.
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: append-only-guard-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'auto' }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,7 +101,9 @@ jobs:
         run: |
           node --input-type=module <<'JS'
           import { execFileSync } from 'node:child_process';
-          import { appendFileSync } from 'node:fs';
+          import { appendFileSync, rmSync } from 'node:fs';
+          import { tmpdir } from 'node:os';
+          import { join } from 'node:path';
 
           const FILE = 'ledger.json';
           const MAX_DEPTH = 32;
@@ -61,6 +113,18 @@ jobs:
           const notes = [];
           // Positions in interventions of lines a bot account appended; they never acknowledge anything.
           const botInterventions = new Set();
+          // Interventions lines as a commit with no bot account appended them, with their position then: the only lines
+          // that acknowledge or retract, so a bot can't void an acknowledgement by breaking, emptying or editing the log.
+          // Every line a bot commit added or changed is kept as written, and never counts as the operator's, even when
+          // an operator commit (a revert, say) brings it back.
+          const operatorLines = [];
+          const botLines = [];
+          const opLine = (i, x) => {
+            if (botLines.some((b) => same(b, x))) return;
+            if (!operatorLines.some(([j, y]) => j === i && same(x, y))) operatorLines.push([i, x]);
+          };
+          // Files a bot account put out of bounds: { commit, path, who, pushed }, in the order checked.
+          const outOfBounds = [];
           // One entry per commit and text: a commit whose short id matches another's still gets its own entry.
           const flag = (commit, text) => { if (!problemsFound.some((p) => p.commit === commit && p.text === text)) problemsFound.push({ commit, text }); };
 
@@ -331,10 +395,13 @@ jobs:
           }
           // ---- end of ledger rules
 
+          process.env.GIT_LITERAL_PATHSPECS = '1'; // file names from bot commits are data: no pathspec magic or globs
           const git = (...args) => execFileSync('git', args, { maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'] });
           const out = (...args) => git(...args).toString('utf8');
           const tryGit = (...args) => { try { return git(...args); } catch { return null; } };
           const short = (sha) => sha.slice(0, 7);
+          // A file name as inert code in the summary, never Markdown or HTML.
+          const inert = (s) => '`' + String(s).replace(/[`\r\n]/g, '') + '`';
           const hasCommit = (sha) => tryGit('cat-file', '-e', `${sha}^{commit}`) !== null;
           const isAncestor = (a, b) => tryGit('merge-base', '--is-ancestor', a, b) !== null;
           const revList = (range) => out('rev-list', '--reverse', '--topo-order', range).split('\n').filter(Boolean);
@@ -413,21 +480,36 @@ jobs:
                     if (!/^100644 blob /.test(out('ls-tree', c, '--', r))) flag(c, `${short(c)}: ${label(o)} names receipt ${JSON.stringify(r)}, which is not a file in this commit`);
                   }
                 }
-                const role = roleOf(who);
-                if (role) {
-                  if (!['entries', 'manipulation'].includes(k)) flag(c, `${short(c)}: ${who} may not append to ${k}`);
-                  else if (k === 'entries' && isObject(o) && role === 'kernel' && o.type === 'check') flag(c, `${short(c)}: ${who} may not append Controller checks (${label(o)})`);
-                  else if (k === 'entries' && isObject(o) && role === 'controller' && o.type !== 'check') flag(c, `${short(c)}: ${who} may append only Controller checks, not a ${JSON.stringify(String(o.type))} line (${label(o)})`);
-                  if (isObject(o) && o.retracts != null) flag(c, `${short(c)}: ${who} may not retract lines`);
+                // Every bot account involved (who pushed it, who wrote it) is held to its own rules.
+                const roles = [].concat(who).map((w) => [w, roleOf(w)]).filter(([, r]) => r);
+                for (const [w, role] of roles) {
+                  if (!['entries', 'manipulation'].includes(k)) flag(c, `${short(c)}: ${w} may not append to ${k}`);
+                  else if (k === 'entries' && isObject(o) && role === 'kernel' && o.type === 'check') flag(c, `${short(c)}: ${w} may not append Controller checks (${label(o)})`);
+                  else if (k === 'entries' && isObject(o) && role === 'controller' && o.type !== 'check') flag(c, `${short(c)}: ${w} may append only Controller checks, not a ${JSON.stringify(String(o.type))} line (${label(o)})`);
+                  if (isObject(o) && o.retracts != null) flag(c, `${short(c)}: ${w} may not retract lines`);
                 }
-                if (role && k === 'interventions') botInterventions.add(soFar[k].length);
+                if (roles.length && k === 'interventions') botInterventions.add(soFar[k].length);
+                if (!roles.length && k === 'interventions') opLine(soFar[k].length, o);
                 soFar[k].push(o);
               }
             }
           }
 
+          // The bot accounts that wrote a commit, by its git author and committer: the account's name, or its GitHub
+          // no-reply address (login@users.noreply.github.com, or id+login@...).
+          function botIdentities(c) {
+            const f = out('log', '-1', '--format=%an%x00%ae%x00%cn%x00%ce', c).replace(/\n$/, '').split('\0');
+            const found = new Set();
+            for (const [name, email] of [[f[0], f[1]], [f[2], f[3]]]) {
+              const m = /^(?:\d+\+)?([^@\s]+)@users\.noreply\.github\.com$/i.exec(email || '');
+              for (const login of [m?.[1], name]) if (login && roleOf(login)) found.add(login.toLowerCase());
+            }
+            return [...found];
+          }
+
           // What a bot account may change in one commit: append to ledger.json, add new receipt files.
-          function checkFiles(c, parents, cur, who) {
+          // pushed: the bot pushed it itself, so the guard may put its out-of-bounds files back.
+          function checkFiles(c, parents, cur, who, pushed) {
             if (cur.data) {
               for (const p of parents) {
                 const base = lastGood(p);
@@ -445,8 +527,13 @@ jobs:
               const [, mode, status] = m, path = raw[i + 1];
               const ok = mode === '100644' && ((path === FILE && status === 'M') || (status === 'A' && RECEIPT.test(path)));
               const verb = { A: 'added', D: 'deleted', M: 'modified', T: 'changed the type of' }[status] || 'changed';
-              if (!ok) flag(c, `${short(c)}: ${who} may only append to ${FILE} and add new receipts/ photos or PDFs, but ${verb} ${JSON.stringify(path)}${mode !== '100644' && status !== 'D' ? ` as mode ${mode}` : ''}`);
-              else if (status === 'A' && taken.has(path.toLowerCase())) flag(c, `${short(c)}: ${JSON.stringify(path)} differs only in case from another receipt`);
+              if (!ok) {
+                flag(c, `${short(c)}: ${who} may only append to ${FILE} and add new receipts/ photos or PDFs, but ${verb} ${JSON.stringify(path)}${mode !== '100644' && status !== 'D' ? ` as mode ${mode}` : ''}`);
+                outOfBounds.push({ commit: c, path, who, pushed });
+              } else if (status === 'A' && taken.has(path.toLowerCase())) {
+                flag(c, `${short(c)}: ${JSON.stringify(path)} differs only in case from another receipt`);
+                outOfBounds.push({ commit: c, path, who, pushed });
+              } else if (path !== FILE) outOfBounds.push({ commit: c, path, who, pushed, inBounds: true }); // may continue a chain, never start one
               if (status === 'A') taken.add(path.toLowerCase());
             }
           }
@@ -465,6 +552,99 @@ jobs:
             return items;
           }
 
+          // Puts back files a bot account pushed out of bounds, in one commit on top of main. A file a bot changed in an
+          // unbroken run of its own pushed commits goes back to how it was before the first of them. Skips ledger.json;
+          // commits the operator has acknowledged, in the ledger this run checked or on main now; files already back;
+          // and files anyone but this guard changed after the bot did (those are the operator's to sort out).
+          function restoreFiles(acknowledged) {
+            // A path's entry at a commit, or null when it is absent or a folder (a folder's files come back one by one).
+            const entry = (sha, p) => { if (!sha) return null; const m = /^(\d{6}) [a-z]+ ([0-9a-f]+)\t/.exec(out('ls-tree', '-z', sha, '--', p)); return m && m[1] !== '040000' ? { mode: m[1], id: m[2] } : null; };
+            const sameEntry = (x, y) => (x?.id ?? null) === (y?.id ?? null) && (x?.mode ?? null) === (y?.mode ?? null);
+            const chains = new Map(); // path -> { first, last, commits }
+            for (const x of outOfBounds) {
+              if (!x.pushed || x.path === FILE || acknowledged.has(x.commit)) continue;
+              const c = chains.get(x.path), par = parentsOf(x.commit)[0] || null;
+              // A later bot commit continues the run only if no commit between the two touched the file.
+              if (c && par && sameEntry(entry(par, x.path), entry(c.last.commit, x.path)) && !out('rev-list', '--full-history', `${c.last.commit}..${par}`, '--', x.path).trim()) { c.last = x; c.commits.push(x.commit); }
+              else if (!x.inBounds) chains.set(x.path, { first: x, last: x, commits: [x.commit] });
+            }
+            // The bot's own unacknowledged commits, which don't count as someone else changing a file after it.
+            const ours = new Set(outOfBounds.filter((x) => x.pushed && !acknowledged.has(x.commit)).map((x) => x.commit));
+            if (!chains.size) return;
+            const remote = env.RESTORE_REMOTE || (API ? `https://github.com/${env.REPO}.git` : null);
+            if (!remote) { notes.push('Not running on GitHub, so no files were put back.'); return; }
+            const auth = env.RESTORE_REMOTE ? [] : ['-c', `http.https://github.com/.extraheader=AUTHORIZATION: basic ${Buffer.from('x-access-token:' + env.GH_TOKEN).toString('base64')}`];
+            const ident = { GIT_AUTHOR_NAME: 'github-actions[bot]', GIT_AUTHOR_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com', GIT_COMMITTER_NAME: 'github-actions[bot]', GIT_COMMITTER_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com' };
+            for (let attempt = 0; attempt < 3; attempt++) {
+              git(...auth, 'fetch', '--quiet', remote, '+refs/heads/main:refs/guard/main');
+              const tip = out('rev-parse', 'refs/guard/main').trim();
+              // Acknowledgements on main now count too: the operator may have acknowledged after the commit checked.
+              const tipIvs = parse(tryGit('cat-file', 'blob', `${tip}:${FILE}`)).data?.interventions || [];
+              const tipRetracted = new Set(tipIvs.filter(isObject).map((x) => x.retracts).filter(Number.isInteger));
+              const ackNow = new Set(tipIvs.flatMap((x, i) => (isObject(x) && x.retracts == null && !tipRetracted.has(i) && !botInterventions.has(i) ? [].concat(x.acknowledges) : [])));
+              const todo = [], kept = [];
+              for (const [p, ch] of chains) {
+                if (ch.commits.some((c) => ackNow.has(c))) continue;
+                if (p.includes('\uFFFD')) { kept.push(`${inert(p)} (its name is not valid UTF-8; put it back by hand)`); continue; }
+                const before = parentsOf(ch.first.commit)[0] || null;
+                const want = entry(before, p);
+                const now = entry(tip, p);
+                if (sameEntry(now, want)) continue;
+                const since = out('log', '--full-history', '--format=%H %an', `${ch.last.commit}..${tip}`, '--', p).split('\n').filter((l) => l && !ours.has(l.slice(0, 40)) && l.slice(41) !== ident.GIT_AUTHOR_NAME);
+                if (since.length || !sameEntry(now, entry(ch.last.commit, p))) { kept.push(`${inert(p)} (changed again after ${short(ch.last.commit)})`); continue; }
+                todo.push({ p, x: ch.first, want });
+              }
+              // A receipt coming back while another that differs only in case is on main would collide: leave it.
+              const tipReceipts = out('ls-tree', '-r', '--name-only', '-z', tip, '--', 'receipts/').split('\0').filter(Boolean);
+              const gone = new Set(todo.filter((t) => !t.want).map((t) => t.p));
+              for (const t of todo.filter((t) => t.want && t.p.startsWith('receipts/'))) {
+                const twin = tipReceipts.find((q) => q !== t.p && !gone.has(q) && q.toLowerCase() === t.p.toLowerCase());
+                if (twin) { todo.splice(todo.indexOf(t), 1); kept.push(`${inert(t.p)} (${inert(twin)}, which differs only in case, is on main now)`); }
+              }
+              const index = join(env.RUNNER_TEMP || tmpdir(), `guard-index-${process.pid}-${attempt}`);
+              const g = (...args) => execFileSync('git', args, { env: { ...process.env, ...ident, GIT_INDEX_FILE: index }, maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8');
+              let commit = null;
+              const put = [];
+              try {
+                if (todo.length) {
+                  g('read-tree', tip);
+                  // Removals first, so a path a bot turned from a file into a folder (or back) is clear before it returns.
+                  for (const t of [...todo.filter((t) => !t.want), ...todo.filter((t) => t.want)]) {
+                    try {
+                      if (t.want) g('update-index', '--add', '--cacheinfo', t.want.mode, t.want.id, t.p);
+                      else g('update-index', '--force-remove', '--', t.p);
+                      put.push(t);
+                    } catch { kept.push(`${inert(t.p)} (could not be put back in place)`); }
+                  }
+                  const tree = put.length ? g('write-tree').trim() : null;
+                  if (tree && tree !== out('rev-parse', `${tip}^{tree}`).trim()) {
+                    const msg = ['Put back files a bot account may not add, change or delete', '',
+                      ...put.map((t) => `${t.p}: as before ${t.x.commit} (${t.x.who})`), '',
+                      'The append-only guard made this commit. The guard keeps failing until the operator acknowledges the breach in the interventions log.'].join('\n');
+                    commit = g('commit-tree', tree, '-p', tip, '-m', msg).trim();
+                  }
+                }
+              } finally { rmSync(index, { force: true }); }
+              const pushedOk = !commit || tryGit(...auth, 'push', '--quiet', remote, `${commit}:refs/heads/main`) !== null;
+              if (pushedOk) {
+                for (const k of kept) notes.push(`Not put back, so the operator must look at it: ${k}.`);
+                if (commit) notes.push(`Put back ${put.map((t) => inert(t.p)).join(', ')} as before the bot's first change, in ${short(commit)}.`);
+                return;
+              }
+            }
+            flag(null, 'Could not push the commit that puts back the files a bot changed (main kept moving); run this check again.');
+          }
+
+          // Refs other than main, which only a bot pushing past this guard would have made: flagged on every run until
+          // deleted, since a push GitHub starts no run for (over three tags at once, or a ref whose commit carries an
+          // older workflow) is otherwise never seen.
+          function checkRefs() {
+            const remote = env.RESTORE_REMOTE || (API ? `https://github.com/${env.REPO}.git` : null);
+            if (!remote) return;
+            const refs = out('ls-remote', '--heads', '--tags', remote).split('\n').filter(Boolean).map((l) => l.split('\t')[1]);
+            for (const r of refs) if (r !== 'refs/heads/main') flag(null, `The repo has ${JSON.stringify(r)}; only main may exist, and the bots may push only to it. Delete it.`);
+          }
+
           async function run() {
             const after = env.AFTER || out('rev-parse', 'HEAD').trim();
             const manual = env.EVENT === 'workflow_dispatch';
@@ -477,6 +657,9 @@ jobs:
             // Start from the newest commit an earlier run of this guard passed, so pushes whose run was
             // skipped, cancelled, deleted or failed are checked again until they pass or are acknowledged.
             let base = before, from = before ? `${short(before)}, the previous tip` : 'the first commit';
+            // The restore needs every commit since the last passing run and who pushed each; otherwise a run of bot
+            // commits could be seen from its middle.
+            let complete = true;
             if (manual) {
               base = null;
               from = 'the first commit (manual re-check)';
@@ -488,12 +671,14 @@ jobs:
                 from = last ? `${short(base)}, the last commit a passing guard run covered` : 'the first commit (no earlier passing run)';
               } catch (e) {
                 flag(null, `Could not list earlier guard runs (${e.message}); run this check again.`);
+                complete = false;
               }
             } else {
               notes.push('Not running on GitHub, so earlier runs and the push log were not consulted.');
             }
             const commits = revList(base ? `${base}..${after}` : after);
             const inRange = new Set(commits);
+            if (base) (lastGood(base)?.interventions || []).forEach((x, i) => opLine(i, x));
 
             // Who pushed each commit: this push's actor, and GitHub's push log for any earlier push in range.
             const pusher = new Map();
@@ -510,19 +695,35 @@ jobs:
               } catch (e) {
                 if (manual) notes.push(`Could not read the push log (${e.message}).`);
                 else flag(null, `Could not read the push log (${e.message}); run this check again.`);
+                complete = false;
               }
             }
             // A commit nobody can be named for gets no benefit of the doubt, except in a manual re-check of
             // old history, which may be older than the push log.
             const unknown = API ? commits.filter((c) => !pusher.has(c)) : [];
-            if (unknown.length && manual) notes.push(`${unknown.length} older commit(s) are not in GitHub's push log, so account rules were not applied to them.`);
+            if (unknown.length) complete = false;
+            if (unknown.length && manual) notes.push(`${unknown.length} older commit(s) are not in GitHub's push log, so account rules were applied only to those a bot account wrote.`);
             else unknown.forEach((c) => flag(c, `${short(c)}: not in GitHub's push log, so it is unclear who pushed it; run this check again, or look at it by hand`));
 
+            const byBot = new Map(); // commit -> the bot account whose rules applied to it
             for (const c of commits) {
               const cur = load(c);
               const parents = parentsOf(c);
-              const who = pusher.get(c);
-              if (appendOnly(who)) checkFiles(c, parents, cur, who);
+              const pushed = appendOnly(pusher.get(c));
+              const bots = [...new Set([...(pushed ? [pusher.get(c).toLowerCase()] : []), ...botIdentities(c)])];
+              const who = bots.length ? bots : pusher.get(c);
+              if (bots.length) { byBot.set(c, bots.join(' + ')); checkFiles(c, parents, cur, bots.join(' + '), pushed); }
+              // Every interventions line a bot commit adds or changes is the bot's, even when the commit also edits old lines.
+              if (bots.length && cur.data) for (const p of parents.length ? parents : [null]) {
+                const pi = (p && lastGood(p)?.interventions) || [];
+                cur.data.interventions.forEach((x, i) => { if (i >= pi.length || !same(pi[i], x)) { botInterventions.add(i); botLines.push(x); } });
+              }
+              // A commit with no bot account owns the new lines it appends, even when it also puts back an old line a bot
+              // edited (checkAppended is skipped then); not a line its parent already had or a bot wrote.
+              if (!bots.length && cur.data) for (const p of parents) {
+                const pi = lastGood(p)?.interventions;
+                if (pi) cur.data.interventions.slice(pi.length).forEach((x, j) => { if (!pi.some((y) => same(x, y))) opLine(pi.length + j, x); });
+              }
               if (cur.missing) {
                 if (parents.some((p) => lastGood(p))) flag(c, `${short(c)}: ${FILE} was deleted`);
                 continue;
@@ -537,22 +738,33 @@ jobs:
             }
 
             // Problems in a commit the operator has acknowledged in an intervention line stay on record here
-            // as notes instead of failing every run. Only standing lines count: not a retracted line, not a
-            // retraction, and not a line a bot account appended.
+            // as notes instead of failing every run. Only standing lines that a commit with no bot account
+            // appended count, as they were appended: not a retracted line, not a retraction, and nothing a bot
+            // wrote; a bot editing or deleting such a line later changes nothing.
             const head = load(after);
-            const ivs = head.data?.interventions || [];
-            const retractedIv = new Set(ivs.filter(isObject).map((x) => x.retracts).filter(Number.isInteger));
-            const acknowledged = new Set(ivs.flatMap((x, i) => (isObject(x) && x.retracts == null && !retractedIv.has(i) && !botInterventions.has(i) ? [].concat(x.acknowledges) : []))
+            // A retraction takes back the operator line that stood at its position when the retraction was appended.
+            const retracted = new Set();
+            operatorLines.forEach(([, x], n) => { if (isObject(x) && Number.isInteger(x.retracts)) { const t = operatorLines.slice(0, n).findLastIndex(([j]) => j === x.retracts); if (t >= 0) retracted.add(t); } });
+            const acknowledged = new Set(operatorLines.flatMap(([, x], n) => (isObject(x) && x.retracts == null && !retracted.has(n) ? [].concat(x.acknowledges) : []))
               .filter((c) => typeof c === 'string' && /^[0-9a-f]{40}$/.test(c)));
             for (const p of problemsFound.filter((x) => x.commit && acknowledged.has(x.commit))) {
-              notes.push(`Acknowledged in the interventions log: ${p.text}`);
+              notes.push(`Acknowledged in the interventions log: ${inert(p.text)}`);
               problemsFound.splice(problemsFound.indexOf(p), 1);
             }
+            if (!manual && !complete) notes.push('Nothing was put back: this run could not see every commit since the last passing run, or who pushed each one. The next complete run will.');
+            else if (!manual) {
+              try { restoreFiles(acknowledged); } catch (e) { flag(null, `Could not put back the files a bot changed: ${String(e?.message || e).split('\n')[0]}`); }
+            }
+            try { checkRefs(); } catch (e) { flag(null, `Could not list the repo's branches and tags: ${String(e?.message || e).split('\n')[0]}`); }
 
             const start = base ? lastGood(base) : null;
             const lines = [`Checked ${commits.length} commit(s) from ${from} up to ${short(after)}.`];
-            const kernel = [...new Set([...pusher.values()].filter(appendOnly))];
-            if (kernel.length) lines.push(`Account rules applied to pushes by ${kernel.join(', ')}.`);
+            const kernel = [...new Set(byBot.values())];
+            if (kernel.length) lines.push(`Account rules applied to commits by ${kernel.join(', ')}.`);
+            const written = [...byBot].filter(([c]) => pusher.has(c) && !appendOnly(pusher.get(c)));
+            if (written.length) lines.push(`Of those, written by a bot but pushed by someone else: ${written.map(([c, w]) => `${short(c)} (${w}, pushed by ${pusher.get(c)})`).join(', ')}.`);
+            const unnamed = [...byBot].filter(([c]) => !pusher.has(c));
+            if (unnamed.length) lines.push(`Of those, written by a bot but not in the push log, so who pushed them is unknown: ${unnamed.map(([c, w]) => `${short(c)} (${w})`).join(', ')}.`);
             if (head.data) {
               for (const k of ARRAYS) {
                 const added = head.data[k].slice(start ? start[k].length : 0);
