@@ -41,10 +41,7 @@
 //   EBAY_RUNAME                         consent-url and exchange only
 //   EBAY_ENV                            "production" (default) or "sandbox"
 
-import { createHash } from 'node:crypto';
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, statSync, unlinkSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { userInfo } from 'node:os';
+import { actor, appendLine, readLog, verifyLog } from './calllog.mjs';
 
 const SCOPES = ['https://api.ebay.com/oauth/api_scope/sell.inventory', 'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly'];
 const LEDGER = 'https://raw.githubusercontent.com/madmax-a79/kernel-ledger/main/ledger.json';
@@ -68,7 +65,6 @@ const MARKETS = { EBAY_CA: { currency: 'CAD', language: 'en-CA' }, EBAY_US: { cu
 const CONDITIONS = ['NEW', 'LIKE_NEW', 'NEW_OTHER', 'NEW_WITH_DEFECTS', 'MANUFACTURER_REFURBISHED', 'CERTIFIED_REFURBISHED', 'EXCELLENT_REFURBISHED', 'VERY_GOOD_REFURBISHED', 'GOOD_REFURBISHED', 'SELLER_REFURBISHED', 'USED_EXCELLENT', 'USED_VERY_GOOD', 'USED_GOOD', 'USED_ACCEPTABLE', 'FOR_PARTS_OR_NOT_WORKING', 'PRE_OWNED_EXCELLENT', 'PRE_OWNED_FAIR'];
 // The fields updateOffer takes; it replaces the whole offer, so revise sends back everything else as it was.
 const OFFER_FIELDS = ['availableQuantity', 'categoryId', 'charity', 'extendedProducerResponsibility', 'hideBuyerDetails', 'includeCatalogProductDetails', 'listingDescription', 'listingDuration', 'listingPolicies', 'listingStartDate', 'lotSize', 'merchantLocationKey', 'pricingSummary', 'quantityLimitPerBuyer', 'regulatory', 'secondaryCategoryId', 'storeCategoryNames', 'tax'];
-const GENESIS = '0'.repeat(64);
 const PRIVATE = 'eBay API data for Kernel and the Controller only. Never commit or publish it; the ledger cites screenshots of the listing and the order instead.';
 
 const COMMANDS = {
@@ -120,60 +116,11 @@ const money = (n, currency) => `${n.toFixed(2)} ${currency}`;
 const amount = (a) => (a && a.value != null && a.value !== '' ? `${Number(a.value).toFixed(2)} ${a.currency || ''}`.trim() : null);
 const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r?\n/g, '<br>');
 
-// ---- the call log -------------------------------------------------------------------------------------
-
-const sha = (s) => createHash('sha256').update(s).digest('hex');
-const lineHash = (obj) => { const { h, ...rest } = obj; return sha(JSON.stringify(rest)); };
-
-function readLog(path) {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, 'utf8').split('\n').filter((l) => l.trim()).map((l, i) => {
-    try { return JSON.parse(l); } catch { return { n: i + 1, broken: true, raw: l.slice(0, 200) }; }
-  });
-}
-
-// Checks every line's hash and its link to the line before; returns the first problem, if any.
-function verifyLog(lines) {
-  let prev = GENESIS;
-  for (let i = 0; i < lines.length; i++) {
-    const x = lines[i];
-    if (x.broken) return `line ${i + 1} is not JSON`;
-    if (x.n !== i + 1) return `line ${i + 1} says it is line ${x.n}`;
-    if (x.prev !== prev) return `line ${i + 1} does not follow line ${i}`;
-    if (x.h !== lineHash(x)) return `line ${i + 1} was changed after it was written`;
-    prev = x.h;
-  }
-  return null;
-}
-
-const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-function withLock(path, fn) {
-  const lock = path + '.lock';
-  const deadline = Date.now() + 10000;
-  for (;;) {
-    try { closeSync(openSync(lock, 'wx')); break; } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      try { if (Date.now() - statSync(lock).mtimeMs > 30000) { unlinkSync(lock); continue; } } catch {}
-      if (Date.now() > deadline) fail(`the call log is locked (${lock}); if no other ebay.mjs is running, delete that file`);
-      sleep(50);
-    }
-  }
-  try { return fn(); } finally { try { unlinkSync(lock); } catch {} }
-}
+// ---- the call log (scripts/calllog.mjs) ---------------------------------------------------------------
 
 function record(ctx, entry) {
   if (!ctx.logPath) return;
-  withLock(ctx.logPath, () => {
-    const lines = readLog(ctx.logPath);
-    const last = lines[lines.length - 1];
-    const line = { n: lines.length + 1, at: new Date().toISOString(), actor: ctx.actor, cmd: ctx.cmd, ...entry, prev: last ? last.h : GENESIS };
-    line.h = lineHash(line);
-    appendFileSync(ctx.logPath, JSON.stringify(line) + '\n');
-  });
-}
-
-function actor() {
-  try { return execFileSync('git', ['config', 'user.name'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || userInfo().username; } catch { return userInfo().username; }
+  appendLine(ctx.logPath, ctx, entry);
 }
 
 // ---- eBay ---------------------------------------------------------------------------------------------

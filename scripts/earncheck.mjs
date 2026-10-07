@@ -12,21 +12,28 @@
 // - no payout receipt file, or one that isn't in the repo. Every receipt that exists (files and links) is listed
 //   under "open" so the Controller can confirm the client's identity is covered, which no script can see;
 // - a client, customer or buyer field at any depth, in any form (clientName, clientname, BUYER_EMAIL);
-// - no id, or no marketplace record before it. In the marketplace call log (WORK_CALL_LOG, or --calllog), exactly
-//   one line must link this earn line to a job ({"marketplace": "...", "job": "...", "earn": "W001"}), that job
-//   must be linked to no other earn line, and the same or an earlier line must record the job's agreed price and
-//   funded escrow ({"marketplace": "...", "job": "...", "price": "40.00 USD", "escrow": "funded"}). "marketplace"
-//   must equal the earn line's, and both lines are dated ("at") on or before the earn line's date (Vancouver). The
-//   marketplace scripts write these lines; until they exist, every earn line is flagged.
+// - no id, or no marketplace record before it. In the marketplace call log (WORK_CALL_LOG, or --calllog), a line
+//   must link this earn line to a job ({"marketplace": "...", "job": "...", "earn": "W001"}), every line linking it
+//   must name that same job, that job must be linked to no other earn line, and the same or an earlier line must
+//   record the job's agreed price and funded escrow ({"marketplace": "...", "job": "...", "price": "40.00 USD",
+//   "escrow": "funded"}). Only lines with "event": "done" from dealwork.mjs start (the price and funded escrow) and
+//   earnings (the link) count, which it writes after its calls succeed; an earn line on any other marketplace is
+//   flagged until a script writes its records. Both bots can append to the log, so dealwork.mjs audit checks each
+//   record against the marketplace and flags one under any other command or marketplace.
+//   "marketplace" must equal the earn line's, and both lines are dated ("at") on or before the earn line's date
+//   (Vancouver). scripts/dealwork.mjs writes these lines (start and earnings); until they exist, every earn line is
+//   flagged;
+// - a price that doesn't match the job's agreed price in that record: the same USD amount for a USD line, or, for a
+//   line recorded in CAD as it landed, the USD amount at the line's own fx_usd_per_cad (to the cent).
 // Then it prints Challenge Value, Traded and Earned exactly as the ledger page computes them (from index.html in
 // this clone, so pull first), for the weekly pack.
 //
 // Exit status: 0 nothing flagged, 1 something flagged, 2 the check couldn't run.
 
-import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readLog, verifyLog } from './calllog.mjs';
 
 const REPO_RAW = 'https://raw.githubusercontent.com/madmax-a79/kernel-ledger/main/';
 const VALET = 'https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json';
@@ -34,7 +41,6 @@ const VALET = 'https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json';
 const CATEGORIES = ['research and summaries', 'data cleanup', 'structured writing and editing', 'code and small automations', 'transcription and translation'];
 const CLIENT_WORDS = ['client', 'customer', 'buyer'];
 const RECEIPT = /^receipts\/[A-Za-z0-9][A-Za-z0-9._-]*\.(jpe?g|png|webp|gif|heic|pdf)$/i;
-const GENESIS = '0'.repeat(64);
 
 class Stop extends Error {}
 const fail = (msg) => { throw new Stop(msg); };
@@ -107,25 +113,13 @@ async function receiptExists(src, p) {
   return true;
 }
 
-// ---- the marketplace call log (the same hash chain as scripts/ebay.mjs's) ------------------------------
-
-const sha = (s) => createHash('sha256').update(s).digest('hex');
-const lineHash = (obj) => { const { h, ...rest } = obj; return sha(JSON.stringify(rest)); };
+// ---- the marketplace call log (scripts/calllog.mjs, the same hash chain as the eBay log) ----------------
 
 function readCallLog(file) {
   if (!file) return null;
   if (!existsSync(file)) return { file, lines: [], chain: `no file at ${file}` };
-  const lines = readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l, i) => {
-    try { const v = JSON.parse(l); return v && typeof v === 'object' && !Array.isArray(v) ? v : { broken: true }; } catch { return { broken: true }; }
-  });
-  let prev = GENESIS, chain = 'intact';
-  for (let i = 0; i < lines.length; i++) {
-    const x = lines[i];
-    if (x.broken) { chain = `line ${i + 1} is not a JSON object`; break; }
-    if (x.n !== i + 1 || x.prev !== prev || x.h !== lineHash(x)) { chain = `broken at line ${i + 1}`; break; }
-    prev = x.h;
-  }
-  return { file, lines, chain };
+  const lines = readLog(file);
+  return { file, lines, chain: verifyLog(lines) || 'intact' };
 }
 
 const vancouverDay = (iso) => {
@@ -142,17 +136,35 @@ function marketplaceRecord(log, e) {
   if (!log) return 'no marketplace record: no marketplace call log is set up (WORK_CALL_LOG)';
   if (log.chain !== 'intact') return `no marketplace record can be trusted: the call log ${log.chain}`;
   const onTime = (x) => { const d = vancouverDay(x.at); return d != null && typeof e.date === 'string' && d <= e.date; };
+  // Only dealwork.mjs writes records (start: price and funded escrow; earnings: the link), and its audit checks them
+  // against dealwork. A record for any other marketplace could only be hand-made, so none can be verified.
+  if (e.marketplace !== 'dealwork.ai') return `no marketplace record: no script writes records for ${JSON.stringify(e.marketplace ?? null)}, so none can be verified`;
   const sameMarket = (x) => x.marketplace === e.marketplace;
-  const links = log.lines.map((x, i) => [x, i]).filter(([x]) => x.earn === e.id && typeof x.job === 'string' && x.job && sameMarket(x));
+  const writes = (x, cmd) => x.cmd === cmd;
+  const links = log.lines.map((x, i) => [x, i]).filter(([x]) => x.event === 'done' && x.earn === e.id && typeof x.job === 'string' && x.job && sameMarket(x) && writes(x, 'earnings'));
   const jobs = [...new Set(links.map(([x]) => x.job))];
   if (jobs.length > 1) return `marketplace record: ${e.id} is linked to more than one job (${jobs.join(', ')})`;
   const ontime = links.filter(([x]) => onTime(x));
   if (!ontime.length) return `no marketplace record: no call-log line on ${e.marketplace} links ${e.id} to a job on or before ${e.date}`;
   const [[link, at]] = ontime;
-  const others = [...new Set(log.lines.filter((x) => x.job === link.job && sameMarket(x) && x.earn != null && x.earn !== e.id).map((x) => x.earn))];
+  const others = [...new Set(log.lines.filter((x) => x.event === 'done' && x.job === link.job && sameMarket(x) && x.earn != null && x.earn !== e.id).map((x) => x.earn))];
   if (others.length) return `marketplace record: job ${link.job} also backs ${others.join(', ')}; a job backs one earn line`;
-  const funded = log.lines.slice(0, at + 1).some((x) => x.job === link.job && sameMarket(x) && x.escrow === 'funded' && x.price != null && x.price !== '' && onTime(x));
+  const funded = log.lines.slice(0, at + 1).find((x) => x.event === 'done' && writes(x, 'start') && x.job === link.job && sameMarket(x) && x.escrow === 'funded' && x.price != null && x.price !== '' && onTime(x));
   if (!funded) return `no marketplace record: job ${link.job} has no call-log line with its agreed price and funded escrow before ${e.id}`;
+  return { price: funded.price, job: link.job };
+}
+
+// The agreed price as recorded ("40.00 USD"), checked against the earn line's price.
+function priceFlag(e, agreed) {
+  const m = /^(\d+(?:\.\d+)?) (USD|CAD)$/.exec(String(agreed));
+  if (!m) return `the marketplace record's price ${JSON.stringify(agreed)} isn't an amount like "40.00 USD"`;
+  const [amount, cur] = [Number(m[1]), m[2]];
+  if (!isNum(e.price)) return null;
+  if (e.currency === cur) return Math.abs(e.price - amount) > 0.005 ? `price ${e.price} ${cur} is not the agreed ${amount.toFixed(2)} ${cur}` : null;
+  if (cur === 'USD' && e.currency === 'CAD' && isNum(e.fx_usd_per_cad) && e.fx_usd_per_cad > 0) {
+    const want = amount / e.fx_usd_per_cad;
+    return Math.abs(e.price - want) > 0.01 ? `price ${e.price} CAD is not the agreed ${amount.toFixed(2)} USD at ${e.fx_usd_per_cad} (${want.toFixed(2)} CAD)` : null;
+  }
   return null;
 }
 
@@ -225,7 +237,8 @@ async function checkLine(src, log, e, status) {
   const named = [...new Set(keysDeep(e).filter((k) => CLIENT_WORDS.some((w) => flatKey(k).includes(w))))];
   if (named.length) flags.push(`client field${named.length > 1 ? 's' : ''} ${named.map((k) => JSON.stringify(k)).join(', ')}`);
   const record = hasId ? marketplaceRecord(log, e) : null;
-  if (record) flags.push(record);
+  if (typeof record === 'string') flags.push(record);
+  else if (record) { const p = priceFlag(e, record.price); if (p) flags.push(p); }
   return { id: e.id ?? null, date: e.date ?? null, marketplace: e.marketplace ?? null, category: e.category ?? null, currency: e.currency ?? null, net_usd: e.net_usd ?? null, controller_status: status, flags, open };
 }
 
