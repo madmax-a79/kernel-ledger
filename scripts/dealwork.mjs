@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Kernel's paid digital work on dealwork.ai (Rule 26), through dealwork's agent API, with limits the Controller
-// can check.
+// Kernel's paid digital work on dealwork.ai (Rule 26), through dealwork's agent API, with limits the Controller and
+// the operator can check.
 //
 //   node scripts/dealwork.mjs jobs [--category research] [--max 20]    eligible jobs that can be taken now
 //   node scripts/dealwork.mjs bid --job <id> --price 24.00 --hours 2 --proposal "..."
@@ -14,10 +14,10 @@
 //   node scripts/dealwork.mjs earnings --contract <id> --earn W001 --received-cad 51.23 --date 2026-10-05
 //   node scripts/dealwork.mjs profile                                 sets the public profile Rule 26 requires
 //   node scripts/dealwork.mjs log [--from 41 --hash <line 41's h>]    the Controller
-//   node scripts/dealwork.mjs audit                                   the Controller
+//   node scripts/dealwork.mjs audit                                   the operator, weekly, on his Mac
 //
-// Limits. They stop mistakes and manipulation through this script; the Controller's audit checks what the script
-// can't (below).
+// Limits. They stop mistakes and manipulation through this script; the weekly audit checks what the script can't
+// (below).
 // - Only the calls on the allowlist below, each signed with the agent's HMAC secret, about one a second at most.
 //   Nothing that spends, transfers, posts jobs, orders from others, answers listing requests or withdraws: Kernel
 //   never pays to get work, and withdrawing is the operator's step in the wallet screen.
@@ -46,22 +46,33 @@
 //   messages, and the operator's approval token; never credentials, job briefs, messages or deliverables. Printed
 //   output carries the brief and messages as their authors wrote them, so it is private.
 //
-// The Controller's audit checks the call log against dealwork: every worker contract, bid, delivered version and
+// The weekly audit checks the call log against dealwork: every worker contract, bid, delivered version and
 // message Kernel sent (and the message cap); every logged marketplace record; the C$25 gate at the Bank of Canada's
 // rate; and any buyer contract, posted job, or wallet top-up, escrow lock, refund or transfer, none of which this
-// script makes. It checks keys/review.pub against the fingerprint in the Controller's secret store. The Bank of
+// script makes. It checks keys/review.pub against the operator's fingerprint. The Bank of
 // Canada rate reads are unsigned public requests and aren't logged; deliver records the rate it used.
+//
+// dealwork offers no read-only credential: the agent's HMAC secret can bid, and the owner's login can do everything
+// the owner can. So the audit runs on the operator's Mac with his login, which the script uses only to read, against
+// a copy of the bots' call log; the Controller holds no dealwork credential and checks the log itself daily (log).
+// With the owner login, dealwork shows the agent's contracts and recent bids but not its posted jobs, wallet or
+// channels; the audit lists those under not_checked.
 //
 // Private by design: dealwork's terms let client data be used only to do the job, so nothing here is published.
 // The ledger's public record is the earn line and its payout receipt.
 //
-// Environment, from the bots' secret store only (never read from a file):
+// Environment, from Kernel's secret store only (never read from a file):
 //   DEALWORK_AGENT_ID, DEALWORK_HMAC_SECRET   the agent's agentAccountId and hmacSecret from dealwork (the apiKey
 //                                             is for dealwork's other sign-in method, which this script doesn't use)
 //   WORK_CALL_LOG                             the call log's path, outside the repo, the same file for both bots
-//   REVIEW_KEY_SHA256                         the Controller only: the review key's fingerprint, for audit
+// For audit, on the operator's Mac only, set in the terminal for that run:
+//   DEALWORK_OWNER_TOKEN                      the operator's dealwork login (a Bearer token); any other command
+//                                             refuses to run while it is set
+//   DEALWORK_AGENT_ID                         the agent's id, to pick its contracts and bids out of the owner's
+//   WORK_CALL_LOG                             a copy of the bots' call log
+//   REVIEW_KEY_SHA256                         the review key's fingerprint
 //   DEALWORK_BASE_URL                         tests only: http://127.0.0.1 or http://localhost with a port; the
-//                                             log records it, and the Controller's audit flags it
+//                                             log records it, and the audit flags it
 
 import { createHmac } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
@@ -133,7 +144,7 @@ const fold = (s) => s.normalize('NFKC').replace(/[\p{Default_Ignorable_Code_Poin
 const ID = '[A-Za-z0-9-]+';
 const ALLOW = [
   ['GET', `^/jobs$`], ['GET', `^/jobs/${ID}$`], ['POST', `^/jobs/${ID}/bids$`], ['POST', `^/jobs/${ID}/claim$`],
-  ['GET', `^/bids/mine$`],
+  ['GET', `^/bids/mine$`], ['GET', `^/agents/${ID}/bids$`],
   ['GET', `^/contracts$`], ['GET', `^/contracts/${ID}$`], ['POST', `^/contracts/${ID}/events$`],
   ['GET', `^/contracts/${ID}/deliverables$`], ['POST', `^/contracts/${ID}/deliverables$`],
   ['GET', `^/contracts/${ID}/messages$`], ['POST', `^/contracts/${ID}/messages$`],
@@ -240,6 +251,7 @@ let lastSent = 0;
 // {data, meta} with withMeta.
 async function call(ctx, method, p, { query, body, absent, withMeta } = {}) {
   if (!allowed(method, p)) fail(`refused: ${method} ${p} is not a call this script makes`);
+  if (ctx.owner && method !== 'GET') fail(`refused: with the operator's login the script only reads (${method} ${p})`);
   if (method === 'POST' && /\/events$/.test(p) && !EVENTS.includes(body?.type)) fail(`refused: the only contract events Kernel sends are ${EVENTS.join(' and ')}`);
   const url = new URL(ctx.urls.api + p);
   for (const [k, v] of Object.entries(query || {})) url.searchParams.set(k, v);
@@ -251,7 +263,7 @@ async function call(ctx, method, p, { query, body, absent, withMeta } = {}) {
     if (wait > 0) await sleep(wait);
     lastSent = Date.now();
     const ts = String(Math.floor(Date.now() / 1000));
-    const headers = {
+    const headers = ctx.owner ? { accept: 'application/json', authorization: `Bearer ${ctx.owner}` } : {
       accept: 'application/json',
       'x-agent-id': ctx.env.agent, 'x-timestamp': ts,
       'x-signature': createHmac('sha256', ctx.env.secret).update(ctx.env.agent + ts + raw).digest('hex'),
@@ -263,7 +275,7 @@ async function call(ctx, method, p, { query, body, absent, withMeta } = {}) {
     note(ctx, { event: 'answer', marketplace: MARKETPLACE, method, path: shown, status: r ? r.status : null, ...(err ? { error: err.slice(0, 200) } : {}), ...(error ? { error } : {}) }, `${method} ${shown} reached dealwork.ai${r ? ` (HTTP ${r.status})` : ''}, but its answer is not in the call log`);
     if (error) fail(error);
     if (absent && r.status === 404) return null;
-    if (r.status === 401 || r.status === 403) fail(`dealwork.ai refused the call (HTTP ${r.status}) to ${method} ${shown}; check DEALWORK_AGENT_ID and DEALWORK_HMAC_SECRET${err ? '\n' + err : ''}`);
+    if (r.status === 401 || r.status === 403) fail(`dealwork.ai refused the call (HTTP ${r.status}) to ${method} ${shown}; ${ctx.owner ? 'the owner login may have expired: copy a fresh DEALWORK_OWNER_TOKEN' : 'check DEALWORK_AGENT_ID and DEALWORK_HMAC_SECRET'}${err ? '\n' + err : ''}`);
     if (r.status === 429) {
       const after = Math.min(120, Math.max(1, Number(r.headers.get('retry-after')) || 60));
       // A read may be retried once, by the audit; a bid, claim or any other write never is.
@@ -679,8 +691,23 @@ async function audit(ctx) {
     if (r.stopped && !/^end of/.test(r.stopped)) problems.push(`not every ${what} was read (${r.stopped})`);
     return r.rows;
   };
-  const contracts = await listed('worker contract', '/contracts', { role: 'worker' });
-  const bids = await listed('bid', '/bids/mine', {});
+  // With the operator's login, dealwork shows the agent's contracts among the owner's (include_agents) and the
+  // agent's recent bids; the agent's posted jobs, wallet and channels aren't shown to the owner, so those checks are
+  // listed as limits instead of passing quietly.
+  const limits = [];
+  const mine = (field) => (rows) => {
+    const own = rows.filter((x) => x[field] === ctx.env.agent);
+    if (rows.some((x) => x[field] == null)) limits.push(`some ${field === 'workerAccountId' ? 'worker' : 'buyer'} contracts carry no ${field}, so they were left out`);
+    return own;
+  };
+  const contracts = ctx.owner ? mine('workerAccountId')(await listed('worker contract', '/contracts', { role: 'worker', include_agents: '1' })) : await listed('worker contract', '/contracts', { role: 'worker' });
+  let bids;
+  if (ctx.owner) {
+    const b = await safely('the agent\'s bids', () => call(ctx, 'GET', `/agents/${ctx.env.agent}/bids`), []);
+    if (b != null && !Array.isArray(b)) problems.push('the agent\'s bids answer is not a list, so no bid was checked');
+    bids = (Array.isArray(b) ? b : []).filter((x) => x && typeof x === 'object');
+    limits.push('dealwork shows the owner only the agent\'s recent bids, so an older bid outside the script may not be seen');
+  } else bids = await listed('bid', '/bids/mine', {});
 
   // Logged records against dealwork's. Only start and earnings write marketplace records.
   for (const x of lines.filter((y) => y.event === 'done' && y.marketplace === MARKETPLACE && (y.escrow != null || y.earn != null) && !['start', 'earnings'].includes(y.cmd))) problems.push(`line ${x.n}: a ${x.cmd} line carries a marketplace record, which only start and earnings write`);
@@ -816,7 +843,8 @@ async function audit(ctx) {
   }
 
   // Channels: Kernel's messages there that aren't its contract messages went around the script.
-  for (const ch of await listed('channel', '/channels', {})) {
+  if (ctx.owner) limits.push('the agent\'s channels, its posted jobs and its wallet can\'t be read with the owner login: check what you can of them in dealwork\'s web app');
+  for (const ch of ctx.owner ? [] : await listed('channel', '/channels', {})) {
     if (ch.id == null || !/^[A-Za-z0-9-]{1,64}$/.test(String(ch.id))) continue;
     const r = await safely(`channel ${ch.id}`, () => listAll(ctx, `/channels/${ch.id}/messages`, {}, { maxPages: 20 }), null);
     if (r && !/^end of/.test(r.stopped)) problems.push(`channel ${ch.id}: not every message was read (${r.stopped})`);
@@ -825,25 +853,32 @@ async function audit(ctx) {
   // Marketplace records under another marketplace's name, which no script writes.
   for (const x of lines.filter((y) => y.event === 'done' && y.marketplace !== MARKETPLACE && (y.escrow != null || y.earn != null))) problems.push(`line ${x.n}: a marketplace record for ${JSON.stringify(x.marketplace ?? null)}, which no script writes`);
   // What this script never does: buy work, post jobs, top up, lock escrow as a buyer, or transfer.
-  for (const c of await listed('buyer contract', '/contracts', { role: 'buyer' })) problems.push(`contract ${c.id} (${c.state}) has Kernel as the buyer`);
-  for (const j of await listed('posted job', '/jobs/mine', {})) problems.push(`job ${j.id} was posted by Kernel`);
-  for (const t of await listed('wallet transaction', '/wallet/transactions', {})) {
+  const buyerRows = ctx.owner ? mine('buyerAccountId')(await listed('buyer contract', '/contracts', { role: 'buyer', include_agents: '1' })) : await listed('buyer contract', '/contracts', { role: 'buyer' });
+  for (const c of buyerRows) problems.push(`contract ${c.id} (${c.state}) has Kernel as the buyer`);
+  for (const j of ctx.owner ? [] : await listed('posted job', '/jobs/mine', {})) problems.push(`job ${j.id} was posted by Kernel`);
+  for (const t of ctx.owner ? [] : await listed('wallet transaction', '/wallet/transactions', {})) {
     if (['topup', 'escrow_lock', 'escrow_refund', 'transfer'].includes(t.type)) problems.push(`wallet transaction ${t.id}: ${t.type} of ${t.amount}, which the script never makes`);
   }
 
   const total = problems.length + out.reduce((s, x) => s + x.problems.length, 0);
   record(ctx, { event: 'done', contracts: out.length, problems: total });
-  return { checked_at: new Date().toISOString(), log: { lines: lines.length, chain: chain || 'intact' }, review_key: { fingerprint, pinned: pin ? (fingerprint === pin ? 'matches' : 'does not match') : 'not set' }, problems: total, log_problems: problems, contracts: out };
+  return { checked_at: new Date().toISOString(), credentials: ctx.owner ? 'the operator\'s owner login, read-only use' : 'the agent\'s id and HMAC secret', ...(limits.length ? { not_checked: [...new Set(limits)] } : {}), log: { lines: lines.length, chain: chain || 'intact' }, review_key: { fingerprint, pinned: pin ? (fingerprint === pin ? 'matches' : 'does not match') : 'not set' }, problems: total, log_problems: problems, contracts: out };
 }
 
 // ---- main --------------------------------------------------------------------------------------------
 
 function config(cmd) {
   const env = { agent: process.env.DEALWORK_AGENT_ID, secret: process.env.DEALWORK_HMAC_SECRET };
+  // The operator's dealwork login (a Bearer token), for the weekly audit on his Mac. It is never in the bots'
+  // secret store: any other command refuses to run while it is set.
+  const owner = process.env.DEALWORK_OWNER_TOKEN || null;
+  if (owner && cmd !== 'audit') fail('DEALWORK_OWNER_TOKEN is the operator\'s login, for audit on his Mac only; unset it');
   const missing = [];
-  if (cmd !== 'log') { if (!env.agent) missing.push('DEALWORK_AGENT_ID'); if (!env.secret) missing.push('DEALWORK_HMAC_SECRET'); }
+  if (cmd !== 'log') { if (!env.agent) missing.push('DEALWORK_AGENT_ID'); if (!env.secret && !(cmd === 'audit' && owner)) missing.push(cmd === 'audit' ? 'DEALWORK_OWNER_TOKEN' : 'DEALWORK_HMAC_SECRET'); }
   if (!process.env.WORK_CALL_LOG) missing.push('WORK_CALL_LOG');
-  if (missing.length) fail(`set ${missing.join(', ')} in the secret store; this script reads its credentials from nowhere else`);
+  if (missing.length) fail(cmd === 'audit'
+    ? `set ${missing.join(', ')}: the audit runs on the operator's Mac with his dealwork login (DEALWORK_OWNER_TOKEN), the agent's id (DEALWORK_AGENT_ID) and a copy of the bots' call log (WORK_CALL_LOG)`
+    : `set ${missing.join(', ')} in the secret store; this script reads its credentials from nowhere else`);
   if (env.agent && !/^[A-Za-z0-9-]{1,64}$/.test(env.agent)) fail('DEALWORK_AGENT_ID must be the agent\'s agentAccountId');
   const repoRoot = realpathSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));
   const logPath = path.resolve(process.env.WORK_CALL_LOG);
@@ -857,9 +892,9 @@ function config(cmd) {
     Object.assign(urls, { api: base + '/api/v1', fx: base + FX_PATH });
   }
   // Every secret-store value the script can see, so none is ever sent or logged.
-  const secrets = [env.secret, ...Object.entries(process.env).filter(([k, v]) => /SECRET|TOKEN|KEY|PASSWORD/i.test(k) && !/SHA256$/i.test(k) && typeof v === 'string' && v.length >= 16).map(([, v]) => v)]
+  const secrets = [env.secret, owner, ...Object.entries(process.env).filter(([k, v]) => /SECRET|TOKEN|KEY|PASSWORD/i.test(k) && !/SHA256$/i.test(k) && typeof v === 'string' && v.length >= 16).map(([, v]) => v)]
     .filter((s) => typeof s === 'string' && s.length >= 8);
-  return { cmd, env, urls, repoRoot, callGap: base ? 0 : CALL_GAP_MS, logPath, actor: actor(), secrets };
+  return { cmd, env, owner: cmd === 'audit' ? owner : null, urls, repoRoot, callGap: base ? 0 : CALL_GAP_MS, logPath, actor: actor(), secrets };
 }
 
 async function main(argv) {

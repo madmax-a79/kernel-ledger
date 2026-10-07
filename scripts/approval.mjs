@@ -1,7 +1,7 @@
 // Approval tokens for the C$25 review gate (Rule 26). The operator signs, with a key only he holds, that he let
 // exactly this deliverable go for this contract on this marketplace: the file's bytes (SHA-256), its name, and the
-// description sent with it. keys/review.pub, in the repo, verifies it; the Controller also checks that file against
-// the fingerprint the operator gave it. Used by scripts/review.mjs (signing, on the operator's Mac) and
+// description sent with it. keys/review.pub, in the repo, verifies it; the weekly audit also checks that file
+// against the operator's fingerprint. Used by scripts/review.mjs (signing, on the operator's Mac) and
 // scripts/dealwork.mjs (checking).
 
 import { createHash, createPublicKey, sign, verify } from 'node:crypto';
@@ -45,7 +45,7 @@ export function publicKey(file = PUBLIC_KEY_FILE) {
   return readFileSync(file, 'utf8');
 }
 
-// The fingerprint the operator gives the Controller: SHA-256 of keys/review.pub's bytes.
+// The fingerprint the operator pins for the audit (REVIEW_KEY_SHA256): SHA-256 of keys/review.pub's bytes.
 export function publicKeyFingerprint(file = PUBLIC_KEY_FILE) {
   return existsSync(file) ? sha256(readFileSync(file)) : null;
 }

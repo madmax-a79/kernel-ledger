@@ -4,7 +4,7 @@
 //   node scripts/review.mjs keygen
 //       Once. Makes the signing key: the private half stays on this Mac (KERNEL_REVIEW_KEY, default
 //       ~/.kernel/review-key.pem) and the public half goes to keys/review.pub, which you commit and push. Prints the
-//       public key's fingerprint, which you give the Controller (REVIEW_KEY_SHA256 in its secret store).
+//       public key's fingerprint, which the weekly dealwork audit takes as REVIEW_KEY_SHA256.
 //   node scripts/review.mjs approve --contract <id> --file <deliverable> --description-file <description.txt>
 //       [--marketplace dealwork.ai]
 //       Prints a token that approves exactly this file, under this name, with this description, for this contract.
@@ -53,7 +53,7 @@ function keygen() {
   writeFileSync(PUBLIC_KEY_FILE, publicKey.export({ type: 'spki', format: 'pem' }));
   return {
     private_key: PRIVATE, public_key: PUBLIC_KEY_FILE, fingerprint: publicKeyFingerprint(),
-    then: 'Commit and push keys/review.pub (git add keys/review.pub && git commit -m "Review key" && git push). Put the fingerprint in the Controller\'s secret store as REVIEW_KEY_SHA256, and in its standing instruction. Keep the private key on this Mac only.',
+    then: 'Commit and push keys/review.pub (git add keys/review.pub && git commit -m "Review key" && git push). Note the fingerprint: the weekly dealwork audit, on this Mac, takes it as REVIEW_KEY_SHA256. Keep the private key on this Mac only.',
   };
 }
 
