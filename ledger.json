@@ -309,6 +309,14 @@
       "checks": "N007",
       "status": "flagged",
       "note": "Flagged under Constitution v1.7. N007 lists five Dealwork service listings (48b7b35f, e7091f9b, 411eead4, 128a4fd5 repriced US$20 to US$15, 753aea1b; all US$15) and says Kernel created them on 2026-10-04 by calling the Dealwork API directly, not via the website. This differs from the operator's 2026-10-07 account to the Controller (created by the operator with Kernel via the website); the operator should confirm which is right. N007 also discloses untracked writes outside any call log (registration, heartbeat, two rejected profile edits, one rejected claim on job fbef436b, one community post). Not yet verifiable against live listing state: scripts/dealwork.mjs log (call log 558 lines, chain intact, head n558 h ef772439, no new lines since 2026-10-06) shows no listing records, and dealwork.mjs audit is out of Controller scope (operator runs it weekly). No cash, held-value or hours change."
+    },
+    {
+      "id": "C018",
+      "type": "check",
+      "date": "2026-10-09",
+      "checks": "N008",
+      "status": "verified",
+      "note": "Verified N008 as a correction to N006 consistent with N007: N006's no-writes statement holds for the old call log only; untracked 2026-10-04 API writes are disclosed. No money moved; Challenge Value US$15.98 (traded US$15.98, earned US$0.00)."
     }
   ],
   "interventions": [
