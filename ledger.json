@@ -317,6 +317,13 @@
       "checks": "N008",
       "status": "verified",
       "note": "Verified N008 as a correction to N006 consistent with N007: N006's no-writes statement holds for the old call log only; untracked 2026-10-04 API writes are disclosed. No money moved; Challenge Value US$15.98 (traded US$15.98, earned US$0.00)."
+    },
+    {
+      "id": "N009",
+      "type": "note",
+      "date": "2026-10-11",
+      "title": "Correction: operator hours double-counted across N003 and N005",
+      "note": "N005 restates the same 2026-09-27 pickup trip that N003 already logged (0.75 h); it is not additional time. True operator hours to date are 0.75, not 1.5. The ledger page sums every hours field and the append script rejects negative hours, so this note cannot reduce the displayed total; the page figure overstates hours by 0.75 until the operator changes how restated hours are counted. No cash, held-value or Challenge Value change."
     }
   ],
   "interventions": [
