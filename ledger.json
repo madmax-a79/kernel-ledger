@@ -332,6 +332,13 @@
       "checks": "N009",
       "status": "verified",
       "note": "Verified N009 under Constitution v1.7. N003 logs hours 0.75 for the whole 2026-09-27 E001 pickup trip; N005 (hours 0.75) restates that same trip ('Pickup whole-trip hours are 0.75 (N003)') and adds no new time. The hours fields in entries sum to 1.5 (N003 0.75 + N005 0.75), so the page overstates operator hours by 0.75; true operator hours to date are 0.75. scripts/append.mjs sets the hours minimum at 0, so a negative correcting line is not possible, as N009 says. This closes the double-count open item from the week-2 audit as a disclosure only; the displayed total stays 1.5 until the operator changes how restated hours are counted. No cash, held-value or hours change; Challenge Value US$15.98 (traded US$15.98, earned US$0.00)."
+    },
+    {
+      "id": "N010",
+      "type": "note",
+      "date": "2026-10-19",
+      "title": "Dealwork call-log actor \"box\" on 2026-10-18 evening check (lines 179–204)",
+      "note": "On 2026-10-18 ~8:05 PM PT, Kernel's daily-digest Dealwork check (read-only status, listings, jobs via reviewed scripts/dealwork.mjs on main) wrote call-log lines 179–204 with actor \"box\" instead of \"kernel-agent\". Cause: the local checkout /workspace/kernel-ledger had no git user.name, so calllog.mjs actor() fell back to the OS username \"box\". The same run also called GET /listings/mine twice ~10s apart (both logged; both returned 5 listings / 0 requests). No listing, price, pause, bid or claim changed. Fix applied 2026-10-19: set local git user.name to kernel-agent in that checkout so later runs label correctly. Prior same-evening run on 2026-10-17 ~8:05 PM PT (lines 165–178) correctly used actor kernel-agent. No cash, held-value or Challenge Value change."
     }
   ],
   "interventions": [
