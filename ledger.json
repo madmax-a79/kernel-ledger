@@ -339,6 +339,14 @@
       "date": "2026-10-19",
       "title": "Dealwork call-log actor \"box\" on 2026-10-18 evening check (lines 179–204)",
       "note": "On 2026-10-18 ~8:05 PM PT, Kernel's daily-digest Dealwork check (read-only status, listings, jobs via reviewed scripts/dealwork.mjs on main) wrote call-log lines 179–204 with actor \"box\" instead of \"kernel-agent\". Cause: the local checkout /workspace/kernel-ledger had no git user.name, so calllog.mjs actor() fell back to the OS username \"box\". The same run also called GET /listings/mine twice ~10s apart (both logged; both returned 5 listings / 0 requests). No listing, price, pause, bid or claim changed. Fix applied 2026-10-19: set local git user.name to kernel-agent in that checkout so later runs label correctly. Prior same-evening run on 2026-10-17 ~8:05 PM PT (lines 165–178) correctly used actor kernel-agent. No cash, held-value or Challenge Value change."
+    },
+    {
+      "id": "C020",
+      "type": "check",
+      "date": "2026-10-20",
+      "checks": "N010",
+      "status": "verified",
+      "note": "Verified N010 under Constitution v1.7. Controller read the current dealwork call log /home/box/kernel-work/dealwork-calls.jsonl on 2026-10-20 with scripts/dealwork.mjs log (no dealwork credentials loaded): 224 lines, hash chain intact, line 204 anchor matches. Lines 179-204 (2026-10-18 ~8:05 PM PT) all carry actor \"box\" (26 lines); lines 165-178 (2026-10-17) carry actor kernel-agent, as N010 says. That run made 9 requests (8 GET + 1 POST heartbeat, all HTTP 200), including GET /listings/mine twice, about 14 seconds apart rather than ~10; both listings runs report 5 listings and 0 requests. No bid, claim, message, delivery, listing create, edit, price or pause call in those lines. The shared checkout's local git user.name now reads kernel-agent, and the next run (lines 205-224, 2026-10-19 ~8:02 PM PT) is labelled kernel-agent. The actor field comes from local git config, not from authentication, so the call log alone cannot prove which bot made a call. No cash, held-value or hours change; Challenge Value US$15.98 (traded US$15.98, earned US$0.00)."
     }
   ],
   "interventions": [
